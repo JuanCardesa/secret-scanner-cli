@@ -1,0 +1,40 @@
+{
+  "patterns": [
+    {
+      "name": "AWS access key",
+      "regex": "\\b(?:AKIA|ASIA)[A-Z0-9]{16}\\b",
+      "confidence": "high",
+      "example": "AKIA[16 uppercase alphanumeric chars]"
+    },
+    {
+      "name": "GitHub personal access token",
+      "regex": "\\b(?:ghp|gho)_[A-Za-z0-9_]{36,255}\\b|\\bgithub_pat_[A-Za-z0-9_]{22}_[A-Za-z0-9_]{59}\\b",
+      "confidence": "high",
+      "example": "ghp_[36+ alphanumeric chars]"
+    },
+    {
+      "name": "Stripe live API key",
+      "regex": "\\b(?:sk_live|pk_live)_[A-Za-z0-9]{24,99}\\b",
+      "confidence": "high",
+      "example": "sk_live_[24+ alphanumeric chars]"
+    },
+    {
+      "name": "PEM private key",
+      "regex": "-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*?-----END [A-Z ]*PRIVATE KEY-----",
+      "confidence": "high",
+      "example": "-----BEGIN PRIVATE KEY----- ... -----END PRIVATE KEY-----"
+    },
+    {
+      "name": "Generic JWT",
+      "regex": "\\beyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\b",
+      "confidence": "medium",
+      "example": "eyJ[header].[payload].[signature]"
+    },
+    {
+      "name": "SendGrid API key",
+      "regex": "\\bSG\\.[A-Za-z0-9_-]{22}\\.[A-Za-z0-9_-]{43}\\b",
+      "confidence": "high",
+      "example": "SG.[22 chars].[43 chars]"
+    }
+  ]
+}

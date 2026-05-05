@@ -1,0 +1,2 @@
+"""Secret scanner package."""
+
