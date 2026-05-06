@@ -3,8 +3,9 @@
 A Python CLI for scanning public GitHub repositories for exposed secrets using
 regex pattern matching and Shannon entropy analysis.
 
-> Status: Phase 1 is implemented. The regex and entropy detectors are covered
-> by unit tests. GitHub API scanning and CLI commands are planned next.
+> Status: Phases 1 and 2 are implemented. The detectors and GitHub API client
+> are covered by unit tests. Scan orchestration and CLI commands are planned
+> next.
 
 ## Features
 
@@ -13,6 +14,8 @@ regex pattern matching and Shannon entropy analysis.
 - Typed findings with dataclasses.
 - Secret redaction before values leave the detector layer.
 - Unit tests for detector behavior and common false-positive filters.
+- Async GitHub REST API client with token auth, pagination, rate-limit backoff,
+  and safe blob decoding.
 
 ## Planned CLI
 
@@ -33,6 +36,13 @@ python -m pip install -e ".[dev]"
 python -m pytest
 ```
 
+## Configuration
+
+The GitHub client reads `GITHUB_TOKEN` from the environment when available.
+Copy `.env.example` to `.env` for local development and keep `.env` out of Git.
+Use a token that belongs to you and only scan repositories you are authorized to
+audit.
+
 ## Project Layout
 
 ```text
@@ -51,7 +61,6 @@ secret-scanner-cli/
 
 ## Roadmap
 
-- Async GitHub REST API client with pagination and rate-limit handling.
 - Repository and organization scanning orchestration.
 - Click-based CLI.
 - Terminal, JSON, and HTML reports.
@@ -61,4 +70,3 @@ secret-scanner-cli/
 
 Use this tool only on repositories you own or are explicitly authorized to test.
 See [LEGAL.md](LEGAL.md).
-

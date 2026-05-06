@@ -6,8 +6,8 @@ import fnmatch
 import math
 import re
 from collections import Counter
+from collections.abc import Iterable
 from pathlib import PurePosixPath
-from typing import Iterable
 
 from secret_scanner.models import Finding, redact_secret
 
@@ -31,7 +31,9 @@ def shannon_entropy(value: str) -> float:
 
     counts = Counter(value)
     length = len(value)
-    return -sum((count / length) * math.log2(count / length) for count in counts.values())
+    return -sum(
+        (count / length) * math.log2(count / length) for count in counts.values()
+    )
 
 
 class EntropyDetector:
@@ -140,4 +142,3 @@ def _is_false_positive_line(line: str) -> bool:
         return True
 
     return False
-

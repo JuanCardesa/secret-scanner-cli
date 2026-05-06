@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterable, Sequence
 from pathlib import Path
-from typing import Iterable, Sequence
 
 from secret_scanner.models import Finding, SecretPattern, redact_secret
 
@@ -17,7 +17,9 @@ class PatternLoadError(ValueError):
     """Raised when pattern configuration cannot be loaded."""
 
 
-def load_patterns(patterns_path: str | Path = DEFAULT_PATTERNS_PATH) -> list[SecretPattern]:
+def load_patterns(
+    patterns_path: str | Path = DEFAULT_PATTERNS_PATH,
+) -> list[SecretPattern]:
     """Load regex patterns from an external YAML file.
 
     Phase 1 keeps this dependency-light by accepting JSON-compatible YAML.
@@ -27,7 +29,7 @@ def load_patterns(patterns_path: str | Path = DEFAULT_PATTERNS_PATH) -> list[Sec
     raw = path.read_text(encoding="utf-8")
 
     try:
-        import yaml  # type: ignore[import-not-found]
+        import yaml  # type: ignore[import-not-found,import-untyped]
 
         parsed = yaml.safe_load(raw)
     except ModuleNotFoundError:
@@ -48,7 +50,9 @@ def load_patterns(patterns_path: str | Path = DEFAULT_PATTERNS_PATH) -> list[Sec
             confidence = str(entry["confidence"]).lower()
             example = str(entry["example"])
         except KeyError as exc:
-            raise PatternLoadError(f"pattern entry {index} missing field: {exc.args[0]}") from exc
+            raise PatternLoadError(
+                f"pattern entry {index} missing field: {exc.args[0]}"
+            ) from exc
 
         if confidence not in VALID_CONFIDENCE:
             raise PatternLoadError(
@@ -58,7 +62,9 @@ def load_patterns(patterns_path: str | Path = DEFAULT_PATTERNS_PATH) -> list[Sec
         try:
             re.compile(regex)
         except re.error as exc:
-            raise PatternLoadError(f"pattern '{name}' has invalid regex: {exc}") from exc
+            raise PatternLoadError(
+                f"pattern '{name}' has invalid regex: {exc}"
+            ) from exc
 
         patterns.append(
             SecretPattern(
@@ -144,4 +150,3 @@ def _selected_match_value(match: re.Match[str]) -> str:
     if "secret" in match.re.groupindex:
         return match.group("secret")
     return match.group(0)
-
