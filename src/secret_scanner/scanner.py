@@ -5,15 +5,17 @@ from __future__ import annotations
 import asyncio
 import fnmatch
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from pathlib import PurePosixPath
-from typing import Protocol
+from typing import Protocol, TypeVar
 
 from secret_scanner.detectors.entropy_detector import EntropyDetector
 from secret_scanner.detectors.regex_detector import RegexDetector
-from secret_scanner.models import Finding, GitTree, GitTreeItem
+from secret_scanner.models import Finding, GitHubRepo, GitTree, GitTreeItem
 
 DEFAULT_MAX_CONCURRENCY = 8
 DEFAULT_MAX_FILE_SIZE_BYTES = 1_000_000
+DEFAULT_MAX_REPO_CONCURRENCY = 2
 DEFAULT_EXCLUDE_PATTERNS = (
     "package-lock.json",
     "npm-shrinkwrap.json",
@@ -22,9 +24,14 @@ DEFAULT_EXCLUDE_PATTERNS = (
     "*.min.js",
     "*.map",
 )
+T = TypeVar("T")
 
 
 class GitHubRepositoryClient(Protocol):
+    async def list_org_repos(self, org: str) -> list[GitHubRepo]:
+        """Return public repositories for an organization."""
+        ...
+
     async def get_branch_sha(self, owner: str, repo: str, branch: str) -> str:
         """Return the commit SHA for a branch."""
         ...
@@ -63,6 +70,19 @@ class RepositoryScanError(RuntimeError):
     """Raised when a repository cannot be scanned completely."""
 
 
+@dataclass(frozen=True)
+class RepositoryScanFailure:
+    repo: str
+    branch: str
+    error: str
+
+
+@dataclass(frozen=True)
+class OrganizationScanResult:
+    findings: list[Finding]
+    failures: list[RepositoryScanFailure]
+
+
 class RepositoryScanner:
     def __init__(
         self,
@@ -73,11 +93,14 @@ class RepositoryScanner:
         exclude_patterns: Iterable[str] = DEFAULT_EXCLUDE_PATTERNS,
         max_file_size_bytes: int = DEFAULT_MAX_FILE_SIZE_BYTES,
         max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
+        max_repo_concurrency: int = DEFAULT_MAX_REPO_CONCURRENCY,
     ) -> None:
         if max_file_size_bytes < 0:
             raise ValueError("max_file_size_bytes must be >= 0")
         if max_concurrency < 1:
             raise ValueError("max_concurrency must be >= 1")
+        if max_repo_concurrency < 1:
+            raise ValueError("max_repo_concurrency must be >= 1")
 
         self._github_client = github_client
         self._regex_detector = regex_detector or RegexDetector()
@@ -85,6 +108,7 @@ class RepositoryScanner:
         self._exclude_patterns = tuple(exclude_patterns)
         self._max_file_size_bytes = max_file_size_bytes
         self._max_concurrency = max_concurrency
+        self._max_repo_concurrency = max_repo_concurrency
 
     async def scan_repo(
         self,
@@ -102,6 +126,36 @@ class RepositoryScanner:
             exclude_patterns=exclude_patterns,
             author_email=author_email,
         )
+
+    async def scan_org(
+        self,
+        org: str,
+        *,
+        branch: str | None = None,
+        exclude_patterns: Iterable[str] = (),
+        author_email: str = "",
+    ) -> OrganizationScanResult:
+        repos = await self._github_client.list_org_repos(org)
+
+        findings: list[Finding] = []
+        failures: list[RepositoryScanFailure] = []
+        for chunk in chunked(repos, self._max_repo_concurrency):
+            results = await asyncio.gather(
+                *(
+                    self._scan_org_repo(
+                        repo,
+                        branch=branch,
+                        exclude_patterns=exclude_patterns,
+                        author_email=author_email,
+                    )
+                    for repo in chunk
+                )
+            )
+            for result in results:
+                findings.extend(result.findings)
+                failures.extend(result.failures)
+
+        return OrganizationScanResult(findings=findings, failures=failures)
 
     async def scan_repository(
         self,
@@ -150,6 +204,36 @@ class RepositoryScanner:
             findings.extend(finding for group in results for finding in group)
 
         return findings
+
+    async def _scan_org_repo(
+        self,
+        repo: GitHubRepo,
+        *,
+        branch: str | None,
+        exclude_patterns: Iterable[str],
+        author_email: str,
+    ) -> OrganizationScanResult:
+        target_branch = branch or repo.default_branch or "main"
+        try:
+            findings = await self.scan_repo(
+                repo.full_name,
+                branch=target_branch,
+                exclude_patterns=exclude_patterns,
+                author_email=author_email,
+            )
+        except Exception as exc:
+            return OrganizationScanResult(
+                findings=[],
+                failures=[
+                    RepositoryScanFailure(
+                        repo=repo.full_name,
+                        branch=target_branch,
+                        error=str(exc),
+                    )
+                ],
+            )
+
+        return OrganizationScanResult(findings=findings, failures=[])
 
     def _should_scan_tree_item(
         self,
@@ -202,9 +286,7 @@ def parse_repo_full_name(repo_full_name: str) -> tuple[str, str]:
     return parts[0], parts[1]
 
 
-def chunked(
-    items: Sequence[GitTreeItem], chunk_size: int
-) -> Iterable[Sequence[GitTreeItem]]:
+def chunked(items: Sequence[T], chunk_size: int) -> Iterable[Sequence[T]]:
     for start in range(0, len(items), chunk_size):
         yield items[start : start + chunk_size]
 
