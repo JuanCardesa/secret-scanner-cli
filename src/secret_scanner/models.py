@@ -30,6 +30,33 @@ class Finding:
     author_email: str
 
 
+@dataclass(frozen=True)
+class GitHubRepo:
+    id: int
+    name: str
+    full_name: str
+    default_branch: str
+    html_url: str
+    private: bool
+
+
+@dataclass(frozen=True)
+class GitTreeItem:
+    path: str
+    mode: str
+    type: str
+    sha: str
+    size: int | None = None
+    url: str | None = None
+
+
+@dataclass(frozen=True)
+class GitTree:
+    sha: str
+    tree: list[GitTreeItem]
+    truncated: bool
+
+
 def redact_secret(value: str) -> str:
     """Redact the middle 60% of a secret-like value."""
     if not value:
@@ -42,4 +69,3 @@ def redact_secret(value: str) -> str:
     keep_each_side = max(1, int(length * 0.2))
     redacted_count = max(1, length - (keep_each_side * 2))
     return f"{value[:keep_each_side]}{'*' * redacted_count}{value[-keep_each_side:]}"
-
