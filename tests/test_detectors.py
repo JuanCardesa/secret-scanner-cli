@@ -7,7 +7,6 @@ import pytest
 from secret_scanner.detectors.entropy_detector import EntropyDetector, shannon_entropy
 from secret_scanner.detectors.regex_detector import RegexDetector, load_patterns
 
-
 PATTERNS_PATH = (
     Path(__file__).resolve().parents[1] / "src" / "secret_scanner" / "patterns.yaml"
 )
