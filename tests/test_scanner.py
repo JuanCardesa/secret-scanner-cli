@@ -6,6 +6,7 @@ import pytest
 
 from secret_scanner.models import GitTree, GitTreeItem
 from secret_scanner.scanner import (
+    RepositoryScanError,
     RepositoryScanner,
     parse_exclude_patterns,
     parse_repo_full_name,
@@ -209,6 +210,24 @@ async def test_scan_repository_honors_per_call_exclude_patterns() -> None:
 
 
 @pytest.mark.asyncio
+async def test_scan_repository_rejects_truncated_trees() -> None:
+    client = FakeGitHubClient(
+        tree=GitTree(
+            sha="tree-sha",
+            truncated=True,
+            tree=[tree_item("src/app.py", "blob-scan")],
+        ),
+        blobs={"blob-scan": "should not be fetched"},
+    )
+    scanner = RepositoryScanner(client)
+
+    with pytest.raises(RepositoryScanError, match="truncated tree"):
+        await scanner.scan_repo("example/repo")
+
+    assert client.blob_calls == []
+
+
+@pytest.mark.asyncio
 async def test_scan_repository_limits_blob_fetch_concurrency() -> None:
     release_blob_calls = asyncio.Event()
     client = FakeGitHubClient(
@@ -231,8 +250,16 @@ async def test_scan_repository_limits_blob_fetch_concurrency() -> None:
     scanner = RepositoryScanner(client, max_concurrency=2)
 
     scan_task = asyncio.create_task(scanner.scan_repo("example/repo"))
-    while client.max_active_blob_calls < 2:
-        await asyncio.sleep(0)
+    for _ in range(100):
+        if client.max_active_blob_calls >= 2:
+            break
+        await asyncio.sleep(0.01)
+    else:
+        release_blob_calls.set()
+        await scan_task
+        pytest.fail(
+            "scan_repo did not reach max_active_blob_calls == 2 within the timeout"
+        )
 
     assert client.max_active_blob_calls == 2
 

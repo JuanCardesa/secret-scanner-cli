@@ -27,6 +27,7 @@ DEFAULT_EXCLUDE_PATTERNS = (
 class GitHubRepositoryClient(Protocol):
     async def get_branch_sha(self, owner: str, repo: str, branch: str) -> str:
         """Return the commit SHA for a branch."""
+        ...
 
     async def get_tree(
         self,
@@ -37,9 +38,11 @@ class GitHubRepositoryClient(Protocol):
         recursive: bool = True,
     ) -> GitTree:
         """Return a Git tree for a commit or tree SHA."""
+        ...
 
     async def get_blob(self, owner: str, repo: str, blob_sha: str) -> str | None:
         """Return decoded text content for a blob, or None for non-text blobs."""
+        ...
 
 
 class Detector(Protocol):
@@ -53,6 +56,11 @@ class Detector(Protocol):
         author_email: str = "",
     ) -> list[Finding]:
         """Scan content and return findings."""
+        ...
+
+
+class RepositoryScanError(RuntimeError):
+    """Raised when a repository cannot be scanned completely."""
 
 
 class RepositoryScanner:
@@ -76,7 +84,7 @@ class RepositoryScanner:
         self._entropy_detector = entropy_detector or EntropyDetector()
         self._exclude_patterns = tuple(exclude_patterns)
         self._max_file_size_bytes = max_file_size_bytes
-        self._semaphore = asyncio.Semaphore(max_concurrency)
+        self._max_concurrency = max_concurrency
 
     async def scan_repo(
         self,
@@ -112,6 +120,10 @@ class RepositoryScanner:
             commit_sha,
             recursive=True,
         )
+        if git_tree.truncated:
+            raise RepositoryScanError(
+                "GitHub returned a truncated tree; refusing to scan partial results"
+            )
 
         active_excludes = self._exclude_patterns + tuple(exclude_patterns)
         scan_targets = [
@@ -120,19 +132,24 @@ class RepositoryScanner:
             if self._should_scan_tree_item(item, active_excludes)
         ]
 
-        scan_tasks = [
-            self._scan_tree_item(
-                owner,
-                repo_name,
-                repo_full_name,
-                item,
-                commit_sha=commit_sha,
-                author_email=author_email,
+        findings: list[Finding] = []
+        for chunk in chunked(scan_targets, self._max_concurrency):
+            results = await asyncio.gather(
+                *(
+                    self._scan_tree_item(
+                        owner,
+                        repo_name,
+                        repo_full_name,
+                        item,
+                        commit_sha=commit_sha,
+                        author_email=author_email,
+                    )
+                    for item in chunk
+                )
             )
-            for item in scan_targets
-        ]
-        results = await asyncio.gather(*scan_tasks)
-        return [finding for group in results for finding in group]
+            findings.extend(finding for group in results for finding in group)
+
+        return findings
 
     def _should_scan_tree_item(
         self,
@@ -157,8 +174,7 @@ class RepositoryScanner:
         commit_sha: str,
         author_email: str,
     ) -> list[Finding]:
-        async with self._semaphore:
-            content = await self._github_client.get_blob(owner, repo_name, item.sha)
+        content = await self._github_client.get_blob(owner, repo_name, item.sha)
 
         if content is None:
             return []
@@ -184,6 +200,13 @@ def parse_repo_full_name(repo_full_name: str) -> tuple[str, str]:
         raise ValueError("repo_full_name must use the 'owner/repo' format")
 
     return parts[0], parts[1]
+
+
+def chunked(
+    items: Sequence[GitTreeItem], chunk_size: int
+) -> Iterable[Sequence[GitTreeItem]]:
+    for start in range(0, len(items), chunk_size):
+        yield items[start : start + chunk_size]
 
 
 def parse_exclude_patterns(raw_excludes: str | Iterable[str] | None) -> tuple[str, ...]:
