@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 
 import httpx
@@ -193,6 +194,65 @@ async def test_successful_zero_remaining_response_delays_next_request() -> None:
 
     assert [first_sha, second_sha] == ["sha-1", "sha-2"]
     assert sleep_delays == [5.0]
+
+
+async def test_concurrent_requests_share_rate_limit_state_safely() -> None:
+    calls = 0
+    sleep_delays: list[float] = []
+    first_request_started = asyncio.Event()
+    release_first_request = asyncio.Event()
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+
+        if calls == 1:
+            first_request_started.set()
+            await release_first_request.wait()
+            return json_response(
+                request,
+                200,
+                {"commit": {"sha": "sha-1"}},
+                headers={
+                    "X-RateLimit-Remaining": "0",
+                    "X-RateLimit-Reset": "105",
+                },
+            )
+
+        return json_response(
+            request,
+            200,
+            {"commit": {"sha": "sha-2"}},
+            headers={"X-RateLimit-Remaining": "10"},
+        )
+
+    async def fake_sleep(delay: float) -> None:
+        sleep_delays.append(delay)
+
+    async with GitHubClient(
+        transport=httpx.MockTransport(handler),
+        sleep=fake_sleep,
+        clock=lambda: 100.0,
+    ) as client:
+        first_task = asyncio.create_task(client.get_branch_sha("owner", "repo", "main"))
+        await first_request_started.wait()
+
+        second_task = asyncio.create_task(
+            client.get_branch_sha("owner", "repo", "develop")
+        )
+        await asyncio.sleep(0)
+        assert calls == 1
+
+        release_first_request.set()
+        first_sha, second_sha = await asyncio.gather(first_task, second_task)
+
+    assert [first_sha, second_sha] == ["sha-1", "sha-2"]
+    assert sleep_delays == [5.0]
+
+
+async def test_negative_max_retries_is_rejected() -> None:
+    with pytest.raises(ValueError, match="max_retries must be >= 0"):
+        GitHubClient(max_retries=-1)
 
 
 async def test_get_tree_parses_tree_items() -> None:

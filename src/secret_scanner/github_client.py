@@ -57,10 +57,14 @@ class GitHubClient:
         max_retries: int = 3,
     ) -> None:
         token_value = token if token is not None else os.getenv("GITHUB_TOKEN")
+        if max_retries < 0:
+            raise ValueError("max_retries must be >= 0")
+
         self._sleep = sleep
         self._clock = clock
         self._max_retries = max_retries
         self._rate_limited_until: float | None = None
+        self._request_lock = asyncio.Lock()
 
         headers = {
             "Accept": "application/vnd.github+json",
@@ -217,35 +221,36 @@ class GitHubClient:
         *,
         params: dict[str, Any] | None = None,
     ) -> httpx.Response:
-        for attempt in range(self._max_retries + 1):
-            await self._respect_rate_limit()
+        async with self._request_lock:
+            for attempt in range(self._max_retries + 1):
+                await self._respect_rate_limit()
 
-            try:
-                response = await self._client.request(
-                    method,
-                    path_or_url,
-                    params=params,
-                )
-            except httpx.HTTPError as exc:
-                raise GitHubClientError(
-                    f"GitHub request failed: {exc.__class__.__name__}",
-                    endpoint=path_or_url,
-                ) from exc
+                try:
+                    response = await self._client.request(
+                        method,
+                        path_or_url,
+                        params=params,
+                    )
+                except httpx.HTTPError as exc:
+                    raise GitHubClientError(
+                        f"GitHub request failed: {exc.__class__.__name__}",
+                        endpoint=path_or_url,
+                    ) from exc
 
-            self._update_rate_limit_state(response.headers)
+                self._update_rate_limit_state(response.headers)
 
-            if response.status_code in {403, 429} and _is_rate_limited(response):
-                if attempt >= self._max_retries:
+                if response.status_code in {403, 429} and _is_rate_limited(response):
+                    if attempt >= self._max_retries:
+                        raise _http_error(response)
+
+                    await self._sleep(_retry_delay(response.headers, self._clock))
+                    self._rate_limited_until = None
+                    continue
+
+                if response.status_code >= 400:
                     raise _http_error(response)
 
-                await self._sleep(_retry_delay(response.headers, self._clock))
-                self._rate_limited_until = None
-                continue
-
-            if response.status_code >= 400:
-                raise _http_error(response)
-
-            return response
+                return response
 
         raise GitHubClientError(
             "GitHub request failed after retries",
