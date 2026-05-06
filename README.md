@@ -19,9 +19,9 @@
 A Python CLI for scanning public GitHub repositories for exposed secrets using
 regex pattern matching and Shannon entropy analysis.
 
-> Status: Phases 1 and 2 are implemented. The detectors and GitHub API client
-> are covered by unit tests. Scan orchestration and CLI commands are planned
-> next.
+> Status: Phases 1 to 4 are implemented. The project currently supports
+> detector execution, GitHub API access, repository scan orchestration, terminal
+> reports, JSON reports, HTML reports, and a tested `scan repo` CLI command.
 
 ## Features
 
@@ -32,16 +32,32 @@ regex pattern matching and Shannon entropy analysis.
 - Unit tests for detector behavior and common false-positive filters.
 - Async GitHub REST API client with token auth, pagination, rate-limit backoff,
   and safe blob decoding.
+- Repository scan orchestration with bounded blob-fetch concurrency.
+- CLI command for scanning a single GitHub repository.
+- Terminal, JSON, and HTML report rendering.
+- Confidence filtering with `--severity`.
 
-## Planned CLI
+## Installation
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate
+python -m pip install -e ".[dev]"
+```
+
+## Usage
 
 ```bash
 secret-scanner scan repo owner/repo
-secret-scanner scan org organization-name
+secret-scanner scan repo owner/repo --branch develop
+secret-scanner scan repo owner/repo --exclude "*.min.js,package-lock.json"
+secret-scanner scan repo owner/repo --severity high
+secret-scanner scan repo owner/repo --output json --output-file reports/report.json
+secret-scanner scan repo owner/repo --output html --output-file reports/report.html
 ```
 
-Planned flags include `--branch`, `--exclude`, `--output json|html`, and
-`--severity`.
+The default output is a colored terminal table. JSON and HTML reports can be
+written to a file with `--output-file`.
 
 ## Development
 
@@ -73,8 +89,11 @@ secret-scanner-cli/
 |-- src/
 |   `-- secret_scanner/
 |       |-- detectors/
+|       |-- cli.py
 |       |-- github_client.py
 |       |-- models.py
+|       |-- reporter.py
+|       |-- scanner.py
 |       `-- patterns.yaml
 |-- tests/
 |-- .env.example
@@ -86,10 +105,10 @@ secret-scanner-cli/
 
 ## Roadmap
 
-- Repository and organization scanning orchestration.
-- Click-based CLI.
-- Terminal, JSON, and HTML reports.
-- Severity filtering and path exclusion.
+- Organization scanning with paginated public repository discovery.
+- CLI support for `scan org`.
+- Optional coverage reporting in CI.
+- Architecture notes in `docs/architecture.md` as the scanner grows.
 
 ## Legal
 
