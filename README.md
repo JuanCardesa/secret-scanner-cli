@@ -1,5 +1,9 @@
 <div align="center">
-  <img src="docs/assets/secret-scanner-cli-logo.png" alt="Secret Scanner CLI logo" width="320">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/secret-scanner-cli-logo-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/secret-scanner-cli-logo-light.png">
+    <img src="docs/assets/secret-scanner-cli-logo-light.png" alt="Secret Scanner CLI logo" width="360">
+  </picture>
 
   <h1>Secret Scanner CLI</h1>
 
@@ -64,7 +68,8 @@ secret-scanner-cli/
 |       `-- ci.yml
 |-- docs/
 |   `-- assets/
-|       `-- secret-scanner-cli-logo.png
+|       |-- secret-scanner-cli-logo-dark.png
+|       `-- secret-scanner-cli-logo-light.png
 |-- src/
 |   `-- secret_scanner/
 |       |-- detectors/
