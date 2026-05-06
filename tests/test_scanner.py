@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from secret_scanner.models import GitTree, GitTreeItem
+from secret_scanner.models import GitHubRepo, GitTree, GitTreeItem
 from secret_scanner.scanner import (
     RepositoryScanError,
     RepositoryScanner,
@@ -21,20 +21,48 @@ class FakeGitHubClient:
         tree: GitTree,
         blobs: dict[str, str | None],
         branch_sha: str = "commit-sha",
+        repos: list[GitHubRepo] | None = None,
+        trees_by_repo: dict[str, GitTree] | None = None,
+        branch_shas_by_repo: dict[tuple[str, str], str | Exception] | None = None,
     ) -> None:
         self.tree = tree
         self.blobs = blobs
         self.branch_sha = branch_sha
+        self.repos = repos or []
+        self.trees_by_repo = trees_by_repo or {}
+        self.branch_shas_by_repo = branch_shas_by_repo or {}
+        self.org_calls: list[str] = []
         self.branch_calls: list[tuple[str, str, str]] = []
         self.tree_calls: list[tuple[str, str, str, bool]] = []
         self.blob_calls: list[tuple[str, str, str]] = []
+        self.active_branch_calls = 0
+        self.max_active_branch_calls = 0
+        self.release_branch_calls: asyncio.Event | None = None
         self.active_blob_calls = 0
         self.max_active_blob_calls = 0
         self.release_blob_calls: asyncio.Event | None = None
 
+    async def list_org_repos(self, org: str) -> list[GitHubRepo]:
+        self.org_calls.append(org)
+        return self.repos
+
     async def get_branch_sha(self, owner: str, repo: str, branch: str) -> str:
         self.branch_calls.append((owner, repo, branch))
-        return self.branch_sha
+        self.active_branch_calls += 1
+        self.max_active_branch_calls = max(
+            self.max_active_branch_calls,
+            self.active_branch_calls,
+        )
+        try:
+            if self.release_branch_calls is not None:
+                await self.release_branch_calls.wait()
+
+            result = self.branch_shas_by_repo.get((repo, branch), self.branch_sha)
+            if isinstance(result, Exception):
+                raise result
+            return result
+        finally:
+            self.active_branch_calls -= 1
 
     async def get_tree(
         self,
@@ -45,7 +73,7 @@ class FakeGitHubClient:
         recursive: bool = True,
     ) -> GitTree:
         self.tree_calls.append((owner, repo, sha, recursive))
-        return self.tree
+        return self.trees_by_repo.get(repo, self.tree)
 
     async def get_blob(self, owner: str, repo: str, blob_sha: str) -> str | None:
         self.blob_calls.append((owner, repo, blob_sha))
@@ -75,6 +103,22 @@ def tree_item(
         type=type_,
         sha=sha,
         size=size,
+    )
+
+
+def github_repo(
+    name: str,
+    *,
+    default_branch: str = "main",
+    org: str = "example-org",
+) -> GitHubRepo:
+    return GitHubRepo(
+        id=len(name),
+        name=name,
+        full_name=f"{org}/{name}",
+        default_branch=default_branch,
+        html_url=f"https://github.com/{org}/{name}",
+        private=False,
     )
 
 
@@ -270,11 +314,140 @@ async def test_scan_repository_limits_blob_fetch_concurrency() -> None:
     assert client.max_active_blob_calls == 2
 
 
+@pytest.mark.asyncio
+async def test_scan_org_uses_repo_default_branches() -> None:
+    first_secret = "AKIA" + "1111111111111111"
+    second_secret = "AKIA" + "2222222222222222"
+    client = FakeGitHubClient(
+        repos=[
+            github_repo("api", default_branch="main"),
+            github_repo("web", default_branch="develop"),
+        ],
+        tree=GitTree(sha="unused", truncated=False, tree=[]),
+        trees_by_repo={
+            "api": GitTree(
+                sha="tree-api",
+                truncated=False,
+                tree=[tree_item("api.env", "blob-api")],
+            ),
+            "web": GitTree(
+                sha="tree-web",
+                truncated=False,
+                tree=[tree_item("web.env", "blob-web")],
+            ),
+        },
+        blobs={
+            "blob-api": f"AWS_ACCESS_KEY_ID={first_secret}",
+            "blob-web": f"AWS_ACCESS_KEY_ID={second_secret}",
+        },
+        branch_shas_by_repo={
+            ("api", "main"): "commit-api",
+            ("web", "develop"): "commit-web",
+        },
+    )
+    scanner = RepositoryScanner(client)
+
+    result = await scanner.scan_org("example-org")
+
+    assert client.org_calls == ["example-org"]
+    assert client.branch_calls == [
+        ("example-org", "api", "main"),
+        ("example-org", "web", "develop"),
+    ]
+    assert {finding.repo for finding in result.findings} == {
+        "example-org/api",
+        "example-org/web",
+    }
+    assert result.failures == []
+
+
+@pytest.mark.asyncio
+async def test_scan_org_allows_branch_override_and_records_failures() -> None:
+    client = FakeGitHubClient(
+        repos=[
+            github_repo("api", default_branch="main"),
+            github_repo("web", default_branch="develop"),
+        ],
+        tree=GitTree(
+            sha="tree-api",
+            truncated=False,
+            tree=[tree_item("api.env", "blob-api")],
+        ),
+        trees_by_repo={
+            "api": GitTree(
+                sha="tree-api",
+                truncated=False,
+                tree=[tree_item("api.env", "blob-api")],
+            ),
+        },
+        blobs={"blob-api": "AKIA" + "1111111111111111"},
+        branch_shas_by_repo={
+            ("api", "release"): "commit-api",
+            ("web", "release"): RepositoryScanError("branch not found"),
+        },
+    )
+    scanner = RepositoryScanner(client)
+
+    result = await scanner.scan_org("example-org", branch="release")
+
+    assert client.branch_calls == [
+        ("example-org", "api", "release"),
+        ("example-org", "web", "release"),
+    ]
+    assert [finding.repo for finding in result.findings] == ["example-org/api"]
+    assert len(result.failures) == 1
+    assert result.failures[0].repo == "example-org/web"
+    assert result.failures[0].branch == "release"
+    assert result.failures[0].error == "branch not found"
+
+
+@pytest.mark.asyncio
+async def test_scan_org_limits_repository_concurrency() -> None:
+    release_branch_calls = asyncio.Event()
+    client = FakeGitHubClient(
+        repos=[
+            github_repo("one"),
+            github_repo("two"),
+            github_repo("three"),
+        ],
+        tree=GitTree(sha="tree-sha", truncated=False, tree=[]),
+        blobs={},
+        branch_shas_by_repo={
+            ("one", "main"): "commit-one",
+            ("two", "main"): "commit-two",
+            ("three", "main"): "commit-three",
+        },
+    )
+    client.release_branch_calls = release_branch_calls
+    scanner = RepositoryScanner(client, max_repo_concurrency=2)
+
+    scan_task = asyncio.create_task(scanner.scan_org("example-org"))
+    for _ in range(100):
+        if client.max_active_branch_calls >= 2:
+            break
+        await asyncio.sleep(0.01)
+    else:
+        release_branch_calls.set()
+        await scan_task
+        pytest.fail(
+            "scan_org did not reach max_active_branch_calls == 2 within the timeout"
+        )
+
+    assert client.max_active_branch_calls == 2
+
+    release_branch_calls.set()
+    await scan_task
+
+    assert len(client.branch_calls) == 3
+    assert client.max_active_branch_calls == 2
+
+
 @pytest.mark.parametrize(
     ("max_file_size_bytes", "max_concurrency", "message"),
     [
         (-1, 1, "max_file_size_bytes"),
         (1, 0, "max_concurrency"),
+        (1, 1, "max_repo_concurrency"),
     ],
 )
 def test_repository_scanner_rejects_invalid_limits(
@@ -292,4 +465,5 @@ def test_repository_scanner_rejects_invalid_limits(
             client,
             max_file_size_bytes=max_file_size_bytes,
             max_concurrency=max_concurrency,
+            max_repo_concurrency=0 if message == "max_repo_concurrency" else 1,
         )
