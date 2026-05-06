@@ -10,13 +10,14 @@ from pathlib import Path
 from typing import cast
 
 from secret_scanner.github_client import GitHubClient, GitHubClientError
-from secret_scanner.models import Confidence
+from secret_scanner.models import Confidence, Finding
 from secret_scanner.reporter import (
     OutputFormat,
     filter_findings_by_severity,
     render_report,
 )
 from secret_scanner.scanner import (
+    OrganizationScanResult,
     RepositoryScanError,
     RepositoryScanner,
     parse_exclude_patterns,
@@ -87,6 +88,43 @@ def build_parser() -> argparse.ArgumentParser:
     )
     repo_parser.set_defaults(handler=_scan_repo)
 
+    org_parser = scan_subcommands.add_parser(
+        "org",
+        help="Scan all public repositories in a GitHub organization.",
+    )
+    org_parser.add_argument("org", help="GitHub organization name.")
+    org_parser.add_argument(
+        "--branch",
+        help="Branch to scan in every repo. Defaults to each repo default branch.",
+    )
+    org_parser.add_argument(
+        "--exclude",
+        default="",
+        help='Comma-separated file path or glob patterns, e.g. "*.min.js,dist/*".',
+    )
+    org_parser.add_argument(
+        "--severity",
+        choices=("low", "medium", "high"),
+        help="Minimum confidence level to include in the report.",
+    )
+    org_parser.add_argument(
+        "--output",
+        choices=("terminal", "json", "html"),
+        default="terminal",
+        help="Report format. Defaults to terminal.",
+    )
+    org_parser.add_argument(
+        "--output-file",
+        type=Path,
+        help="Write the report to a file instead of stdout.",
+    )
+    org_parser.add_argument(
+        "--no-color",
+        action="store_true",
+        help="Disable ANSI colors in terminal output.",
+    )
+    org_parser.set_defaults(handler=_scan_org)
+
     return parser
 
 
@@ -104,6 +142,25 @@ async def _scan_repo(args: argparse.Namespace) -> int:
             exclude_patterns=parse_exclude_patterns(args.exclude),
         )
 
+    _emit_report(findings, args)
+    return 0
+
+
+async def _scan_org(args: argparse.Namespace) -> int:
+    async with GitHubClient() as github_client:
+        scanner = RepositoryScanner(github_client)
+        result = await scanner.scan_org(
+            args.org,
+            branch=args.branch,
+            exclude_patterns=parse_exclude_patterns(args.exclude),
+        )
+
+    _emit_report(result.findings, args)
+    _emit_scan_failures(result)
+    return 2 if result.failures else 0
+
+
+def _emit_report(findings: list[Finding], args: argparse.Namespace) -> None:
     filtered_findings = filter_findings_by_severity(
         findings,
         _optional_confidence(args.severity),
@@ -115,7 +172,14 @@ async def _scan_repo(args: argparse.Namespace) -> int:
         use_color=not args.no_color,
     )
     _write_output(output, args.output_file)
-    return 0
+
+
+def _emit_scan_failures(result: OrganizationScanResult) -> None:
+    for failure in result.failures:
+        print(
+            f"Warning: skipped {failure.repo}@{failure.branch}: {failure.error}",
+            file=sys.stderr,
+        )
 
 
 def _optional_confidence(value: str | None) -> Confidence | None:

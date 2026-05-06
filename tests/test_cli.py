@@ -8,6 +8,7 @@ import pytest
 
 from secret_scanner import cli
 from secret_scanner.models import Confidence, Finding
+from secret_scanner.scanner import OrganizationScanResult, RepositoryScanFailure
 
 
 class FakeGitHubClient:
@@ -25,6 +26,7 @@ class FakeGitHubClient:
 class FakeRepositoryScanner:
     calls: list[dict[str, Any]] = []
     findings: list[Finding] = []
+    org_result: OrganizationScanResult | None = None
 
     def __init__(self, github_client: FakeGitHubClient) -> None:
         self.github_client = github_client
@@ -47,6 +49,27 @@ class FakeRepositoryScanner:
         )
         return self.findings
 
+    async def scan_org(
+        self,
+        org: str,
+        *,
+        branch: str | None = None,
+        exclude_patterns: tuple[str, ...] = (),
+        author_email: str = "",
+    ) -> OrganizationScanResult:
+        self.__class__.calls.append(
+            {
+                "org": org,
+                "branch": branch,
+                "exclude_patterns": exclude_patterns,
+                "author_email": author_email,
+            }
+        )
+        if self.org_result is not None:
+            return self.org_result
+
+        return OrganizationScanResult(findings=self.findings, failures=[])
+
 
 def finding(*, confidence: Confidence = "high") -> Finding:
     return Finding(
@@ -68,6 +91,7 @@ def fake_scanner(monkeypatch: pytest.MonkeyPatch) -> None:
     FakeGitHubClient.closed = False
     FakeRepositoryScanner.calls = []
     FakeRepositoryScanner.findings = [finding()]
+    FakeRepositoryScanner.org_result = None
     monkeypatch.setattr(cli, "GitHubClient", FakeGitHubClient)
     monkeypatch.setattr(cli, "RepositoryScanner", FakeRepositoryScanner)
 
@@ -153,6 +177,94 @@ def test_scan_repo_filters_by_severity(capsys: pytest.CaptureFixture[str]) -> No
 
     assert exit_code == 0
     assert [item["confidence"] for item in report["findings"]] == ["high"]
+
+
+def test_scan_org_uses_default_branches_when_branch_is_omitted(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    exit_code = cli.main(
+        [
+            "scan",
+            "org",
+            "example-org",
+            "--exclude",
+            "*.min.js",
+            "--no-color",
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "AWS Access Key ID" in captured.out
+    assert captured.err == ""
+    assert FakeRepositoryScanner.calls == [
+        {
+            "org": "example-org",
+            "branch": None,
+            "exclude_patterns": ("*.min.js",),
+            "author_email": "",
+        }
+    ]
+
+
+def test_scan_org_allows_branch_override_and_json_output(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    FakeRepositoryScanner.org_result = OrganizationScanResult(
+        findings=[finding(confidence="medium"), finding(confidence="high")],
+        failures=[],
+    )
+
+    exit_code = cli.main(
+        [
+            "scan",
+            "org",
+            "example-org",
+            "--branch",
+            "release",
+            "--severity",
+            "high",
+            "--output",
+            "json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    report = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert [item["confidence"] for item in report["findings"]] == ["high"]
+    assert FakeRepositoryScanner.calls == [
+        {
+            "org": "example-org",
+            "branch": "release",
+            "exclude_patterns": (),
+            "author_email": "",
+        }
+    ]
+
+
+def test_scan_org_reports_partial_failures(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    FakeRepositoryScanner.org_result = OrganizationScanResult(
+        findings=[finding()],
+        failures=[
+            RepositoryScanFailure(
+                repo="example-org/web",
+                branch="main",
+                error="GitHub returned a truncated tree",
+            )
+        ],
+    )
+
+    exit_code = cli.main(["scan", "org", "example-org", "--no-color"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    assert "AWS Access Key ID" in captured.out
+    assert "Warning: skipped example-org/web@main" in captured.err
 
 
 def test_scan_repo_returns_error_for_scanner_failure(
