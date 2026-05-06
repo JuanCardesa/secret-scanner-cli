@@ -19,9 +19,10 @@
 A Python CLI for scanning public GitHub repositories for exposed secrets using
 regex pattern matching and Shannon entropy analysis.
 
-> Status: Phases 1 to 4 are implemented. The project currently supports
+> Status: Phases 1 to 5 are implemented. The project currently supports
 > detector execution, GitHub API access, repository scan orchestration, terminal
-> reports, JSON reports, HTML reports, and a tested `scan repo` CLI command.
+> reports, JSON reports, HTML reports, and tested `scan repo` / `scan org`
+> commands.
 
 ## Features
 
@@ -32,8 +33,9 @@ regex pattern matching and Shannon entropy analysis.
 - Unit tests for detector behavior and common false-positive filters.
 - Async GitHub REST API client with token auth, pagination, rate-limit backoff,
   and safe blob decoding.
-- Repository scan orchestration with bounded blob-fetch concurrency.
-- CLI command for scanning a single GitHub repository.
+- Repository scan orchestration with bounded blob-fetch and repo concurrency.
+- CLI commands for scanning a single GitHub repository or all public repos in an
+  organization.
 - Terminal, JSON, and HTML report rendering.
 - Confidence filtering with `--severity`.
 
@@ -54,10 +56,18 @@ secret-scanner scan repo owner/repo --exclude "*.min.js,package-lock.json"
 secret-scanner scan repo owner/repo --severity high
 secret-scanner scan repo owner/repo --output json --output-file reports/report.json
 secret-scanner scan repo owner/repo --output html --output-file reports/report.html
+secret-scanner scan org organization-name
+secret-scanner scan org organization-name --branch release
+secret-scanner scan org organization-name --severity high --output json
 ```
 
 The default output is a colored terminal table. JSON and HTML reports can be
 written to a file with `--output-file`.
+
+For organization scans, each repository uses its GitHub `default_branch` unless
+`--branch` is provided. If one repository fails, the scanner records the failure,
+continues with the remaining repositories, prints a warning to stderr, and exits
+with status code `2` to signal a partial scan.
 
 ## Development
 
@@ -72,8 +82,8 @@ python -m pytest
 
 The GitHub client reads `GITHUB_TOKEN` from the environment when available.
 Copy `.env.example` to `.env` for local development and keep `.env` out of Git.
-Use a token that belongs to you and only scan repositories you are authorized to
-audit.
+Use a token that belongs to you and only scan repositories or organizations you
+are authorized to audit.
 
 ## Project Layout
 
@@ -105,10 +115,9 @@ secret-scanner-cli/
 
 ## Roadmap
 
-- Organization scanning with paginated public repository discovery.
-- CLI support for `scan org`.
 - Optional coverage reporting in CI.
 - Architecture notes in `docs/architecture.md` as the scanner grows.
+- Release preparation for `v0.1.0`.
 
 ## Legal
 
