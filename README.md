@@ -1,5 +1,7 @@
 # Secret Scanner CLI
 
+[![CI](https://github.com/JuanCardesa/secret-scanner-cli/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/JuanCardesa/secret-scanner-cli/actions/workflows/ci.yml)
+
 A Python CLI for scanning public GitHub repositories for exposed secrets using
 regex pattern matching and Shannon entropy analysis.
 
