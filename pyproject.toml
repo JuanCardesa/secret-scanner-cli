@@ -30,6 +30,9 @@ dependencies = [
   "PyYAML>=6.0.2",
 ]
 
+[project.scripts]
+secret-scanner = "secret_scanner.cli:main"
+
 [project.optional-dependencies]
 dev = [
   "pytest>=8.0",

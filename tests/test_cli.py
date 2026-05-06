@@ -1,0 +1,180 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from secret_scanner import cli
+from secret_scanner.models import Confidence, Finding
+
+
+class FakeGitHubClient:
+    entered = False
+    closed = False
+
+    async def __aenter__(self) -> FakeGitHubClient:
+        self.__class__.entered = True
+        return self
+
+    async def __aexit__(self, *_exc_info: object) -> None:
+        self.__class__.closed = True
+
+
+class FakeRepositoryScanner:
+    calls: list[dict[str, Any]] = []
+    findings: list[Finding] = []
+
+    def __init__(self, github_client: FakeGitHubClient) -> None:
+        self.github_client = github_client
+
+    async def scan_repo(
+        self,
+        repo_full_name: str,
+        *,
+        branch: str = "main",
+        exclude_patterns: tuple[str, ...] = (),
+        author_email: str = "",
+    ) -> list[Finding]:
+        self.__class__.calls.append(
+            {
+                "repo_full_name": repo_full_name,
+                "branch": branch,
+                "exclude_patterns": exclude_patterns,
+                "author_email": author_email,
+            }
+        )
+        return self.findings
+
+
+def finding(*, confidence: Confidence = "high") -> Finding:
+    return Finding(
+        repo="example/repo",
+        file_path="config/settings.env",
+        line_number=5,
+        matched_text="AKIA************ABCD",
+        detection_method="regex",
+        pattern_name="AWS Access Key ID",
+        confidence=confidence,
+        commit_sha="abc123",
+        author_email="",
+    )
+
+
+@pytest.fixture(autouse=True)
+def fake_scanner(monkeypatch: pytest.MonkeyPatch) -> None:
+    FakeGitHubClient.entered = False
+    FakeGitHubClient.closed = False
+    FakeRepositoryScanner.calls = []
+    FakeRepositoryScanner.findings = [finding()]
+    monkeypatch.setattr(cli, "GitHubClient", FakeGitHubClient)
+    monkeypatch.setattr(cli, "RepositoryScanner", FakeRepositoryScanner)
+
+
+def test_scan_repo_outputs_terminal_report(capsys: pytest.CaptureFixture[str]) -> None:
+    exit_code = cli.main(
+        [
+            "scan",
+            "repo",
+            "example/repo",
+            "--branch",
+            "develop",
+            "--exclude",
+            "*.min.js,package-lock.json",
+            "--no-color",
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "AWS Access Key ID" in captured.out
+    assert "AKIA************ABCD" in captured.out
+    assert captured.err == ""
+    assert FakeGitHubClient.entered is True
+    assert FakeGitHubClient.closed is True
+    assert FakeRepositoryScanner.calls == [
+        {
+            "repo_full_name": "example/repo",
+            "branch": "develop",
+            "exclude_patterns": ("*.min.js", "package-lock.json"),
+            "author_email": "",
+        }
+    ]
+
+
+def test_scan_repo_writes_json_report(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    output_file = tmp_path / "report.json"
+
+    exit_code = cli.main(
+        [
+            "scan",
+            "repo",
+            "example/repo",
+            "--output",
+            "json",
+            "--output-file",
+            str(output_file),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    report = json.loads(output_file.read_text(encoding="utf-8"))
+
+    assert exit_code == 0
+    assert captured.out == ""
+    assert report["findings"][0]["matched_text"] == "AKIA************ABCD"
+
+
+def test_scan_repo_filters_by_severity(capsys: pytest.CaptureFixture[str]) -> None:
+    FakeRepositoryScanner.findings = [
+        finding(confidence="low"),
+        finding(confidence="high"),
+    ]
+
+    exit_code = cli.main(
+        [
+            "scan",
+            "repo",
+            "example/repo",
+            "--severity",
+            "high",
+            "--output",
+            "json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    report = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert [item["confidence"] for item in report["findings"]] == ["high"]
+
+
+def test_scan_repo_returns_error_for_scanner_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    class BrokenScanner(FakeRepositoryScanner):
+        async def scan_repo(
+            self,
+            repo_full_name: str,
+            *,
+            branch: str = "main",
+            exclude_patterns: tuple[str, ...] = (),
+            author_email: str = "",
+        ) -> list[Finding]:
+            raise ValueError("repo_full_name must use the 'owner/repo' format")
+
+    monkeypatch.setattr(cli, "RepositoryScanner", BrokenScanner)
+
+    exit_code = cli.main(["scan", "repo", "invalid"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert captured.out == ""
+    assert "owner/repo" in captured.err
