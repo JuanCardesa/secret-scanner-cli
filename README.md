@@ -1,6 +1,20 @@
-# Secret Scanner CLI
+<div align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/secret-scanner-cli-logo-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/secret-scanner-cli-logo-light.png">
+    <img src="docs/assets/secret-scanner-cli-logo-light.png" alt="Secret Scanner CLI logo" width="360">
+  </picture>
 
-[![CI](https://github.com/JuanCardesa/secret-scanner-cli/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/JuanCardesa/secret-scanner-cli/actions/workflows/ci.yml)
+  <h1>Secret Scanner CLI</h1>
+
+  <p>Defensive Python CLI for authorized GitHub secret scanning.</p>
+
+  <p>
+    <a href="https://github.com/JuanCardesa/secret-scanner-cli/actions/workflows/ci.yml">
+      <img src="https://github.com/JuanCardesa/secret-scanner-cli/actions/workflows/ci.yml/badge.svg?branch=develop" alt="CI">
+    </a>
+  </p>
+</div>
 
 A Python CLI for scanning public GitHub repositories for exposed secrets using
 regex pattern matching and Shannon entropy analysis.
@@ -49,16 +63,25 @@ audit.
 
 ```text
 secret-scanner-cli/
-├── src/
-│   └── secret_scanner/
-│       ├── detectors/
-│       ├── models.py
-│       └── patterns.yaml
-├── tests/
-├── LEGAL.md
-├── LICENSE
-├── README.md
-└── pyproject.toml
+|-- .github/
+|   `-- workflows/
+|       `-- ci.yml
+|-- docs/
+|   `-- assets/
+|       |-- secret-scanner-cli-logo-dark.png
+|       `-- secret-scanner-cli-logo-light.png
+|-- src/
+|   `-- secret_scanner/
+|       |-- detectors/
+|       |-- github_client.py
+|       |-- models.py
+|       `-- patterns.yaml
+|-- tests/
+|-- .env.example
+|-- LEGAL.md
+|-- LICENSE
+|-- README.md
+`-- pyproject.toml
 ```
 
 ## Roadmap
