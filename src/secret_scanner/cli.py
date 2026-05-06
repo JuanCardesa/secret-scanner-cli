@@ -5,8 +5,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence, cast
+from typing import cast
 
 from secret_scanner.github_client import GitHubClient, GitHubClientError
 from secret_scanner.models import Confidence
