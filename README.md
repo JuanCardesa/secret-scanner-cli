@@ -123,10 +123,14 @@ secret-scanner-cli/
 See [docs/architecture.md](docs/architecture.md) for a summary of the main
 components and security boundaries.
 
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for release notes.
+
 ## Roadmap
 
-- Release preparation for `v0.1.0`.
-- Changelog maintenance for future releases.
+- Publish the `v0.1.0` release.
+- Add release automation for future versions.
 
 ## Legal
 
