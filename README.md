@@ -38,6 +38,7 @@ regex pattern matching and Shannon entropy analysis.
   organization.
 - Terminal, JSON, and HTML report rendering.
 - Confidence filtering with `--severity`.
+- CI checks for linting, formatting, static typing, tests, and coverage.
 
 ## Installation
 
@@ -78,6 +79,9 @@ python -m pip install -e ".[dev]"
 python -m pytest
 ```
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the branch, commit, and pull request
+workflow.
+
 ## Configuration
 
 The GitHub client reads `GITHUB_TOKEN` from the environment when available.
@@ -96,6 +100,7 @@ secret-scanner-cli/
 |   `-- assets/
 |       |-- secret-scanner-cli-logo-dark.png
 |       `-- secret-scanner-cli-logo-light.png
+|   `-- architecture.md
 |-- src/
 |   `-- secret_scanner/
 |       |-- detectors/
@@ -107,17 +112,21 @@ secret-scanner-cli/
 |       `-- patterns.yaml
 |-- tests/
 |-- .env.example
+|-- CONTRIBUTING.md
 |-- LEGAL.md
 |-- LICENSE
 |-- README.md
+|-- SECURITY.md
 `-- pyproject.toml
 ```
 
+See [docs/architecture.md](docs/architecture.md) for a summary of the main
+components and security boundaries.
+
 ## Roadmap
 
-- Optional coverage reporting in CI.
-- Architecture notes in `docs/architecture.md` as the scanner grows.
 - Release preparation for `v0.1.0`.
+- Changelog maintenance for future releases.
 
 ## Legal
 

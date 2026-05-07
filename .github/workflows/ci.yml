@@ -56,4 +56,4 @@ jobs:
         run: python -m mypy src tests
 
       - name: Run pytest
-        run: python -m pytest
+        run: python -m pytest --cov=secret_scanner --cov-report=term-missing --cov-report=xml
