@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import json
+import shutil
+import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any
 
@@ -85,6 +89,22 @@ def finding(*, confidence: Confidence = "high") -> Finding:
     )
 
 
+@contextmanager
+def report_path(*parts: str) -> Iterator[Path]:
+    base_dir = Path("reports") / "test-cli" / uuid.uuid4().hex
+    path = base_dir.joinpath(*parts)
+
+    try:
+        yield path
+    finally:
+        if base_dir.exists():
+            shutil.rmtree(base_dir)
+        with suppress(OSError):
+            base_dir.parent.rmdir()
+        with suppress(OSError):
+            base_dir.parent.parent.rmdir()
+
+
 @pytest.fixture(autouse=True)
 def fake_scanner(monkeypatch: pytest.MonkeyPatch) -> None:
     FakeGitHubClient.entered = False
@@ -129,29 +149,50 @@ def test_scan_repo_outputs_terminal_report(capsys: pytest.CaptureFixture[str]) -
 
 
 def test_scan_repo_writes_json_report(
-    tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    output_file = tmp_path / "report.json"
+    with report_path("report.json") as output_file:
+        exit_code = cli.main(
+            [
+                "scan",
+                "repo",
+                "example/repo",
+                "--output",
+                "json",
+                "--output-file",
+                str(output_file),
+            ]
+        )
 
-    exit_code = cli.main(
-        [
-            "scan",
-            "repo",
-            "example/repo",
-            "--output",
-            "json",
-            "--output-file",
-            str(output_file),
-        ]
-    )
-
-    captured = capsys.readouterr()
-    report = json.loads(output_file.read_text(encoding="utf-8"))
+        captured = capsys.readouterr()
+        report = json.loads(output_file.read_text(encoding="utf-8"))
 
     assert exit_code == 0
     assert captured.out == ""
     assert report["findings"][0]["matched_text"] == "AKIA************ABCD"
+
+
+def test_scan_repo_creates_output_file_parent_directory(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with report_path("nested", "report.json") as output_file:
+        exit_code = cli.main(
+            [
+                "scan",
+                "repo",
+                "example/repo",
+                "--output",
+                "json",
+                "--output-file",
+                str(output_file),
+            ]
+        )
+
+        captured = capsys.readouterr()
+
+        assert exit_code == 0
+        assert captured.out == ""
+        assert output_file.exists()
 
 
 def test_scan_repo_filters_by_severity(capsys: pytest.CaptureFixture[str]) -> None:
