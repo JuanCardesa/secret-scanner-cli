@@ -1,0 +1,6 @@
+Confidence | Method  | Pattern                      | Repository         | File    | Line | Match                                           
+-----------+---------+------------------------------+--------------------+---------+------+-------------------------------------------------
+high       | regex   | AWS access key               | demo/local-fixture | app.env | 2    | AKIA************0000                            
+high       | regex   | GitHub personal access token | demo/local-fixture | app.env | 3    | ghp_AAAA************************AAAAAAAA        
+high       | regex   | Stripe live API key          | demo/local-fixture | app.env | 4    | sk_liv********************BBBBBB                
+medium     | entropy | High entropy token           | demo/local-fixture | app.env | 5    | UvQXUNYAU******************************5ObQ3DfNB

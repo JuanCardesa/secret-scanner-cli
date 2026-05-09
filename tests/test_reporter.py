@@ -51,11 +51,12 @@ def test_render_json_returns_structured_report() -> None:
 
 def test_render_terminal_uses_redacted_values() -> None:
     output = render_terminal([finding()], use_color=False)
+    unredacted_value = "AKIA" + ("0" * 12) + "ABCD"
 
     assert "Confidence" in output
     assert "AWS Access Key ID" in output
     assert "AKIA************ABCD" in output
-    assert "AKIA000000000000ABCD" not in output
+    assert unredacted_value not in output
 
 
 def test_render_terminal_handles_empty_findings() -> None:
