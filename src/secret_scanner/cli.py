@@ -203,6 +203,7 @@ def _write_output(output: str, output_file: Path | None) -> None:
         print(output)
         return
 
+    output_file.parent.mkdir(parents=True, exist_ok=True)
     output_file.write_text(output + "\n", encoding="utf-8")
 
 

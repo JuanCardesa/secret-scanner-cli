@@ -129,11 +129,10 @@ def test_scan_repo_outputs_terminal_report(capsys: pytest.CaptureFixture[str]) -
 
 
 def test_scan_repo_writes_json_report(
-    tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
 ) -> None:
     output_file = tmp_path / "report.json"
-
     exit_code = cli.main(
         [
             "scan",
@@ -152,6 +151,30 @@ def test_scan_repo_writes_json_report(
     assert exit_code == 0
     assert captured.out == ""
     assert report["findings"][0]["matched_text"] == "AKIA************ABCD"
+
+
+def test_scan_repo_creates_output_file_parent_directory(
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    output_file = tmp_path / "nested" / "report.json"
+    exit_code = cli.main(
+        [
+            "scan",
+            "repo",
+            "example/repo",
+            "--output",
+            "json",
+            "--output-file",
+            str(output_file),
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert captured.out == ""
+    assert output_file.exists()
 
 
 def test_scan_repo_filters_by_severity(capsys: pytest.CaptureFixture[str]) -> None:

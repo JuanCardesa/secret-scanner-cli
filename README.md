@@ -70,6 +70,59 @@ For organization scans, each repository uses its GitHub `default_branch` unless
 continues with the remaining repositories, prints a warning to stderr, and exits
 with status code `2` to signal a partial scan.
 
+## Example Results
+
+The repository includes a local demo that scans a controlled synthetic fixture.
+The fixture is generated at runtime under `docs/demo/.generated/`, which is
+ignored by Git. It contains only fake values created for scanner validation, and
+the committed demo reports contain only redacted matches.
+
+Regenerate the demo reports locally:
+
+```bash
+python docs/demo/generate_example_results.py
+```
+
+The command writes:
+
+- terminal output: [docs/demo/reports/example-terminal.txt](docs/demo/reports/example-terminal.txt)
+- JSON report: [docs/demo/reports/example-report.json](docs/demo/reports/example-report.json)
+- HTML report: [docs/demo/reports/example-report.html](docs/demo/reports/example-report.html)
+
+The demo fixture produces four findings: three high-confidence regex matches
+for AWS, GitHub, and Stripe-shaped values, plus one medium-confidence entropy
+match for a generated token-like value.
+
+Terminal excerpt:
+
+```text
+Confidence | Method  | Pattern                      | Repository         | File    | Line | Match
+-----------+---------+------------------------------+--------------------+---------+------+-------------------------------------------------
+high       | regex   | AWS access key               | demo/local-fixture | app.env | 2    | AKIA************0000
+high       | regex   | GitHub personal access token | demo/local-fixture | app.env | 3    | ghp_AAAA************************AAAAAAAA
+high       | regex   | Stripe live API key          | demo/local-fixture | app.env | 4    | sk_liv********************BBBBBB
+medium     | entropy | High entropy token           | demo/local-fixture | app.env | 5    | UvQXUNYAU******************************5ObQ3DfNB
+```
+
+JSON excerpt:
+
+```json
+{
+  "confidence": "high",
+  "detection_method": "regex",
+  "file_path": "app.env",
+  "matched_text": "AKIA************0000",
+  "pattern_name": "AWS access key",
+  "repo": "demo/local-fixture"
+}
+```
+
+HTML excerpt:
+
+```html
+<tr><td>medium</td><td>entropy</td><td>High entropy token</td><td>demo/local-fixture</td><td>app.env</td><td>5</td><td><code>UvQXUNYAU******************************5ObQ3DfNB</code></td><td><code>demo-local-commit</code></td></tr>
+```
+
 ## Development
 
 ```bash
@@ -97,9 +150,12 @@ secret-scanner-cli/
 |   `-- workflows/
 |       `-- ci.yml
 |-- docs/
-|   `-- assets/
-|       |-- secret-scanner-cli-logo-dark.png
-|       `-- secret-scanner-cli-logo-light.png
+|   |-- assets/
+|   |   |-- secret-scanner-cli-logo-dark.png
+|   |   `-- secret-scanner-cli-logo-light.png
+|   |-- demo/
+|   |   |-- generate_example_results.py
+|   |   `-- reports/
 |   `-- architecture.md
 |-- src/
 |   `-- secret_scanner/
@@ -123,10 +179,14 @@ secret-scanner-cli/
 See [docs/architecture.md](docs/architecture.md) for a summary of the main
 components and security boundaries.
 
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for release notes.
+
 ## Roadmap
 
-- Release preparation for `v0.1.0`.
-- Changelog maintenance for future releases.
+- Publish the `v0.1.0` release.
+- Add release automation for future versions.
 
 ## Legal
 
