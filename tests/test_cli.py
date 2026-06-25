@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from secret_scanner import cli
+from secret_scanner.baseline import write_baseline
 from secret_scanner.models import Confidence, Finding
 from secret_scanner.scanner import OrganizationScanResult, RepositoryScanFailure
 
@@ -239,6 +240,99 @@ def test_scan_repo_filters_by_severity(capsys: pytest.CaptureFixture[str]) -> No
     assert [item["confidence"] for item in report["findings"]] == ["high"]
 
 
+def test_scan_repo_write_baseline_writes_file_and_skips_report(
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    baseline_path = tmp_path / "baseline.json"
+    second_finding = Finding(
+        repo="example/repo",
+        file_path="other.env",
+        line_number=1,
+        matched_text="ghp_AAAA",
+        detection_method="regex",
+        pattern_name="GitHub personal access token",
+        confidence="high",
+        commit_sha="def456",
+    )
+    FakeRepositoryScanner.findings = [finding(), second_finding]
+
+    exit_code = cli.main(
+        [
+            "scan",
+            "repo",
+            "example/repo",
+            "--write-baseline",
+            str(baseline_path),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(baseline_path.read_text(encoding="utf-8"))
+
+    assert exit_code == 0
+    assert "Wrote 2 finding(s)" in captured.out
+    assert len(payload["accepted"]) == 2
+
+
+def test_scan_repo_baseline_filters_previously_accepted_findings(
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    accepted_finding = finding(confidence="high")
+    new_finding = Finding(
+        repo="example/repo",
+        file_path="other.env",
+        line_number=1,
+        matched_text="brand-new-secret",
+        detection_method="regex",
+        pattern_name="AWS Access Key ID",
+        confidence="high",
+        commit_sha="def456",
+    )
+    baseline_path = tmp_path / "baseline.json"
+    write_baseline(baseline_path, [accepted_finding])
+    FakeRepositoryScanner.findings = [accepted_finding, new_finding]
+
+    exit_code = cli.main(
+        [
+            "scan",
+            "repo",
+            "example/repo",
+            "--baseline",
+            str(baseline_path),
+            "--output",
+            "json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    report = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert [item["matched_text"] for item in report["findings"]] == ["brand-new-secret"]
+
+
+def test_scan_repo_baseline_missing_file_returns_error(
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    exit_code = cli.main(
+        [
+            "scan",
+            "repo",
+            "example/repo",
+            "--baseline",
+            str(tmp_path / "missing.json"),
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "baseline file not found" in captured.err
+
+
 def test_scan_org_uses_default_branches_when_branch_is_omitted(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -410,6 +504,64 @@ def test_scan_org_reports_partial_failures(
     assert exit_code == 2
     assert "AWS Access Key ID" in captured.out
     assert "Warning: skipped example-org/web@main" in captured.err
+
+
+def test_scan_org_baseline_filters_findings_and_still_reports_failures(
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    accepted_finding = finding(confidence="high")
+    baseline_path = tmp_path / "baseline.json"
+    write_baseline(baseline_path, [accepted_finding])
+    FakeRepositoryScanner.org_result = OrganizationScanResult(
+        findings=[accepted_finding],
+        failures=[
+            RepositoryScanFailure(repo="example-org/web", branch="main", error="boom")
+        ],
+    )
+
+    exit_code = cli.main(
+        [
+            "scan",
+            "org",
+            "example-org",
+            "--baseline",
+            str(baseline_path),
+            "--output",
+            "json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    report = json.loads(captured.out)
+
+    assert exit_code == 2
+    assert report["findings"] == []
+    assert "Warning: skipped example-org/web@main" in captured.err
+
+
+def test_scan_org_write_baseline_skips_report_but_still_reports_failures(
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    baseline_path = tmp_path / "baseline.json"
+    FakeRepositoryScanner.org_result = OrganizationScanResult(
+        findings=[finding()],
+        failures=[
+            RepositoryScanFailure(repo="example-org/web", branch="main", error="boom")
+        ],
+    )
+
+    exit_code = cli.main(
+        ["scan", "org", "example-org", "--write-baseline", str(baseline_path)]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    assert "Wrote 1 finding(s)" in captured.out
+    assert "Warning: skipped example-org/web@main" in captured.err
+    assert baseline_path.exists()
 
 
 def test_scan_repo_returns_error_for_scanner_failure(

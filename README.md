@@ -54,6 +54,10 @@ to clone and inspect.
   organization.
 - Terminal, JSON, and HTML report rendering.
 - Confidence filtering with `--severity`.
+- Commit-history scanning with `--include-history` for both `scan repo` and
+  `scan org`.
+- Baseline allowlist (`--baseline` / `--write-baseline`) to suppress
+  previously accepted findings.
 - CI checks for linting, formatting, static typing, tests, and coverage.
 
 ## Installation
@@ -79,6 +83,8 @@ secret-scanner scan org organization-name
 secret-scanner scan org organization-name --branch release
 secret-scanner scan org organization-name --severity high --output json
 secret-scanner scan org organization-name --include-history --max-commits 200
+secret-scanner scan repo owner/repo --write-baseline baseline.json
+secret-scanner scan repo owner/repo --baseline baseline.json
 ```
 
 The default output is a colored terminal table. JSON and HTML reports can be
@@ -96,6 +102,18 @@ lines added by the most recent commits (50 by default, configurable with
 `--max-commits`) on that branch, so secrets that only ever existed in
 history are still caught. For `scan org`, `--max-commits` applies per
 repository.
+
+### Baseline allowlist
+
+Every finding gets a stable fingerprint from its repository, file path, line
+number, detection method, pattern, and redacted value (not its commit, so
+the fingerprint survives unrelated commits to the branch). `--write-baseline
+PATH` snapshots every finding from the current scan into a baseline file and
+exits without printing a report; `--baseline PATH` loads that file on a
+later scan and removes any finding matching an accepted fingerprint from the
+report, so only new findings show up. Review a scan's output before writing
+a baseline from it -- the baseline mechanism does not distinguish a real
+secret from a false positive, it only remembers what you told it to accept.
 
 ## Example Results
 
@@ -229,9 +247,10 @@ See [CHANGELOG.md](CHANGELOG.md) for release notes.
   a deliberate choice to avoid making unauthorized requests with someone
   else's credentials, at the cost of being unable to confirm a key is still
   active.
-- **No baseline or allowlist mechanism.** Every scan reports every match
-  again; there is no way yet to mark a finding as an accepted risk or known
-  false positive so it stops appearing in subsequent scans.
+- **The baseline allowlist is not centrally managed.** `--baseline` /
+  `--write-baseline` (see [Usage](#usage)) work per invocation; there is no
+  shared, versioned baseline store for a team, and a baseline file is only
+  as trustworthy as the review behind the scan that produced it.
 - **No CI/CD integration.** There is no reusable GitHub Action and no SARIF
   output, so wiring this into a pull request check currently means scripting
   the CLI directly.
@@ -244,7 +263,6 @@ See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 - Publish the `v0.1.0` release.
 - Add release automation for future versions.
-- Add a baseline/allowlist mechanism for accepted findings.
 - Add a reusable GitHub Action and SARIF output for CI integration.
 
 ## Legal

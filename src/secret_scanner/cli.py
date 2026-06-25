@@ -9,6 +9,11 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import cast
 
+from secret_scanner.baseline import (
+    filter_accepted_findings,
+    load_baseline,
+    write_baseline,
+)
 from secret_scanner.github_client import GitHubClient, GitHubClientError
 from secret_scanner.models import Confidence, Finding
 from secret_scanner.reporter import (
@@ -104,6 +109,23 @@ def build_parser() -> argparse.ArgumentParser:
             f"Defaults to {DEFAULT_MAX_HISTORY_COMMITS}."
         ),
     )
+    repo_parser.add_argument(
+        "--baseline",
+        type=Path,
+        help=(
+            "Path to a baseline file. Findings matching an accepted fingerprint "
+            "in it are excluded from the report."
+        ),
+    )
+    repo_parser.add_argument(
+        "--write-baseline",
+        type=Path,
+        help=(
+            "Write every finding from this scan to PATH as an accepted baseline, "
+            "then exit. Combine with --baseline on later runs to surface only "
+            "new findings."
+        ),
+    )
     repo_parser.set_defaults(handler=_scan_repo)
 
     org_parser = scan_subcommands.add_parser(
@@ -158,6 +180,23 @@ def build_parser() -> argparse.ArgumentParser:
             f"--include-history is set. Defaults to {DEFAULT_MAX_HISTORY_COMMITS}."
         ),
     )
+    org_parser.add_argument(
+        "--baseline",
+        type=Path,
+        help=(
+            "Path to a baseline file. Findings matching an accepted fingerprint "
+            "in it are excluded from the report."
+        ),
+    )
+    org_parser.add_argument(
+        "--write-baseline",
+        type=Path,
+        help=(
+            "Write every finding from this scan to PATH as an accepted baseline, "
+            "then exit. Combine with --baseline on later runs to surface only "
+            "new findings."
+        ),
+    )
     org_parser.set_defaults(handler=_scan_org)
 
     return parser
@@ -186,7 +225,14 @@ async def _scan_repo(args: argparse.Namespace) -> int:
                 exclude_patterns=exclude_patterns,
             )
 
-    _emit_report(findings, args)
+    if args.write_baseline is not None:
+        write_baseline(args.write_baseline, findings)
+        print(
+            f"Wrote {len(findings)} finding(s) to baseline file: {args.write_baseline}"
+        )
+        return 0
+
+    _emit_report(_apply_baseline(findings, args.baseline), args)
     return 0
 
 
@@ -212,9 +258,28 @@ async def _scan_org(args: argparse.Namespace) -> int:
                 failures=result.failures + history_result.failures,
             )
 
-    _emit_report(result.findings, args)
+    if args.write_baseline is not None:
+        write_baseline(args.write_baseline, result.findings)
+        print(
+            f"Wrote {len(result.findings)} finding(s) to baseline file: "
+            f"{args.write_baseline}"
+        )
+        _emit_scan_failures(result)
+        return 2 if result.failures else 0
+
+    _emit_report(_apply_baseline(result.findings, args.baseline), args)
     _emit_scan_failures(result)
     return 2 if result.failures else 0
+
+
+def _apply_baseline(
+    findings: list[Finding], baseline_path: Path | None
+) -> list[Finding]:
+    if baseline_path is None:
+        return findings
+
+    accepted = load_baseline(baseline_path)
+    return filter_accepted_findings(findings, accepted)
 
 
 def _emit_report(findings: list[Finding], args: argparse.Namespace) -> None:
