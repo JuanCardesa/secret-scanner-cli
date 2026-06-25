@@ -35,6 +35,78 @@
       "regex": "\\bSG\\.[A-Za-z0-9_-]{22}\\.[A-Za-z0-9_-]{43}\\b",
       "confidence": "high",
       "example": "SG.[22 chars].[43 chars]"
+    },
+    {
+      "name": "Google API key",
+      "regex": "\\bAIza[0-9A-Za-z_-]{35}\\b",
+      "confidence": "high",
+      "example": "AIza[35 alphanumeric chars]"
+    },
+    {
+      "name": "Slack token",
+      "regex": "\\bxox[baprs]-[0-9A-Za-z-]{10,72}\\b",
+      "confidence": "high",
+      "example": "xoxb-[10-72 alphanumeric chars]"
+    },
+    {
+      "name": "Slack webhook URL",
+      "regex": "https://hooks\\.slack\\.com/services/T[0-9A-Za-z_]{8,12}/B[0-9A-Za-z_]{8,12}/[0-9A-Za-z_]{24}",
+      "confidence": "high",
+      "example": "https://hooks.slack.com/services/T000/B000/[24 chars]"
+    },
+    {
+      "name": "npm access token",
+      "regex": "\\bnpm_[A-Za-z0-9]{36}\\b",
+      "confidence": "high",
+      "example": "npm_[36 alphanumeric chars]"
+    },
+    {
+      "name": "PyPI upload token",
+      "regex": "\\bpypi-AgEIcHlwaS5vcmc[A-Za-z0-9_-]{50,1000}\\b",
+      "confidence": "high",
+      "example": "pypi-AgEIcHlwaS5vcmc[50+ chars]"
+    },
+    {
+      "name": "Twilio API key",
+      "regex": "\\bSK[0-9a-fA-F]{32}\\b",
+      "confidence": "high",
+      "example": "SK[32 hex chars]"
+    },
+    {
+      "name": "Mailgun API key",
+      "regex": "\\bkey-[0-9a-zA-Z]{32}\\b",
+      "confidence": "high",
+      "example": "key-[32 alphanumeric chars]"
+    },
+    {
+      "name": "Azure storage account key",
+      "regex": "AccountKey=[A-Za-z0-9+/]{86}==",
+      "confidence": "high",
+      "example": "AccountKey=[86 base64 chars]=="
+    },
+    {
+      "name": "Database connection string with credentials",
+      "regex": "\\b(?:postgres(?:ql)?|mysql|mongodb(?:\\+srv)?)://[^:\\s/]+:[^@\\s/]+@[^\\s'\"]+",
+      "confidence": "medium",
+      "example": "postgres://user:password@host:5432/db"
+    },
+    {
+      "name": "Discord bot token",
+      "regex": "\\b[MN][A-Za-z\\d]{23}\\.[\\w-]{6}\\.[\\w-]{27}\\b",
+      "confidence": "high",
+      "example": "[M|N][23 chars].[6 chars].[27 chars]"
+    },
+    {
+      "name": "Telegram bot token",
+      "regex": "\\b\\d{8,10}:[A-Za-z0-9_-]{35}\\b",
+      "confidence": "medium",
+      "example": "123456789:[35 alphanumeric chars]"
+    },
+    {
+      "name": "Square access token",
+      "regex": "\\bsq0atp-[0-9A-Za-z_-]{22}\\b",
+      "confidence": "high",
+      "example": "sq0atp-[22 alphanumeric chars]"
     }
   ]
 }
