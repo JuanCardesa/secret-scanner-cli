@@ -15,6 +15,7 @@ from secret_scanner.baseline import (
     write_baseline,
 )
 from secret_scanner.github_client import GitHubClient, GitHubClientError
+from secret_scanner.local_scanner import LocalScanError, LocalScanner
 from secret_scanner.models import Confidence, Finding
 from secret_scanner.reporter import (
     OutputFormat,
@@ -38,7 +39,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         return asyncio.run(_run(args))
-    except (GitHubClientError, RepositoryScanError, ValueError) as exc:
+    except (GitHubClientError, RepositoryScanError, LocalScanError, ValueError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
@@ -199,6 +200,61 @@ def build_parser() -> argparse.ArgumentParser:
     )
     org_parser.set_defaults(handler=_scan_org)
 
+    local_parser = scan_subcommands.add_parser(
+        "local",
+        help="Scan a local directory or file (no GitHub API involved).",
+    )
+    local_parser.add_argument(
+        "path",
+        nargs="?",
+        default=".",
+        help="Local directory or file to scan. Defaults to the current directory.",
+    )
+    local_parser.add_argument(
+        "--exclude",
+        default="",
+        help='Comma-separated file path or glob patterns, e.g. "*.min.js,dist/*".',
+    )
+    local_parser.add_argument(
+        "--severity",
+        choices=("low", "medium", "high"),
+        help="Minimum confidence level to include in the report.",
+    )
+    local_parser.add_argument(
+        "--output",
+        choices=("terminal", "json", "html"),
+        default="terminal",
+        help="Report format. Defaults to terminal.",
+    )
+    local_parser.add_argument(
+        "--output-file",
+        type=Path,
+        help="Write the report to a file instead of stdout.",
+    )
+    local_parser.add_argument(
+        "--no-color",
+        action="store_true",
+        help="Disable ANSI colors in terminal output.",
+    )
+    local_parser.add_argument(
+        "--baseline",
+        type=Path,
+        help=(
+            "Path to a baseline file. Findings matching an accepted fingerprint "
+            "in it are excluded from the report."
+        ),
+    )
+    local_parser.add_argument(
+        "--write-baseline",
+        type=Path,
+        help=(
+            "Write every finding from this scan to PATH as an accepted baseline, "
+            "then exit. Combine with --baseline on later runs to surface only "
+            "new findings."
+        ),
+    )
+    local_parser.set_defaults(handler=_scan_local)
+
     return parser
 
 
@@ -270,6 +326,24 @@ async def _scan_org(args: argparse.Namespace) -> int:
     _emit_report(_apply_baseline(result.findings, args.baseline), args)
     _emit_scan_failures(result)
     return 2 if result.failures else 0
+
+
+async def _scan_local(args: argparse.Namespace) -> int:
+    scanner = LocalScanner()
+    findings = scanner.scan_path(
+        args.path,
+        exclude_patterns=parse_exclude_patterns(args.exclude),
+    )
+
+    if args.write_baseline is not None:
+        write_baseline(args.write_baseline, findings)
+        print(
+            f"Wrote {len(findings)} finding(s) to baseline file: {args.write_baseline}"
+        )
+        return 0
+
+    _emit_report(_apply_baseline(findings, args.baseline), args)
+    return 0
 
 
 def _apply_baseline(

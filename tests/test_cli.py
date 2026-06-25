@@ -586,3 +586,109 @@ def test_scan_repo_returns_error_for_scanner_failure(
     assert exit_code == 1
     assert captured.out == ""
     assert "owner/repo" in captured.err
+
+
+def test_scan_local_outputs_terminal_report(
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "app.env").write_text(
+        "AWS_ACCESS_KEY_ID=AKIA0000000000000000\n", encoding="utf-8"
+    )
+
+    exit_code = cli.main(["scan", "local", str(tmp_path), "--no-color"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "AWS access key" in captured.out
+    assert "app.env" in captured.out
+    assert captured.err == ""
+
+
+def test_scan_local_defaults_to_current_directory(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "app.env").write_text(
+        "AWS_ACCESS_KEY_ID=AKIA0000000000000000\n", encoding="utf-8"
+    )
+    monkeypatch.chdir(tmp_path)
+
+    exit_code = cli.main(["scan", "local", "--output", "json"])
+
+    assert exit_code == 0
+
+
+def test_scan_local_honors_exclude_and_severity(
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "dist").mkdir()
+    (tmp_path / "dist" / "app.min.js").write_text(
+        "token = AKIA1111111111111111\n", encoding="utf-8"
+    )
+    (tmp_path / "src.py").write_text("token = AKIA2222222222222222\n", encoding="utf-8")
+
+    exit_code = cli.main(
+        [
+            "scan",
+            "local",
+            str(tmp_path),
+            "--exclude",
+            "*.min.js",
+            "--severity",
+            "high",
+            "--output",
+            "json",
+        ]
+    )
+    captured = capsys.readouterr()
+    report = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert [item["file_path"] for item in report["findings"]] == ["src.py"]
+
+
+def test_scan_local_write_baseline_then_baseline_filters_findings(
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "app.env").write_text(
+        "AWS_ACCESS_KEY_ID=AKIA0000000000000000\n", encoding="utf-8"
+    )
+    baseline_path = tmp_path / "baseline.json"
+
+    write_exit_code = cli.main(
+        ["scan", "local", str(tmp_path), "--write-baseline", str(baseline_path)]
+    )
+    write_captured = capsys.readouterr()
+
+    filtered_exit_code = cli.main(
+        [
+            "scan",
+            "local",
+            str(tmp_path),
+            "--baseline",
+            str(baseline_path),
+            "--output",
+            "json",
+        ]
+    )
+    filtered_captured = capsys.readouterr()
+    report = json.loads(filtered_captured.out)
+
+    assert write_exit_code == 0
+    assert "Wrote 1 finding(s)" in write_captured.out
+    assert filtered_exit_code == 0
+    assert report["findings"] == []
+
+
+def test_scan_local_returns_error_for_missing_path(
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    exit_code = cli.main(["scan", "local", str(tmp_path / "missing")])
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "does not exist" in captured.err
