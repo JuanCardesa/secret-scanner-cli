@@ -42,6 +42,18 @@ def test_regex_detector_loads_patterns_from_external_file() -> None:
         "PEM private key",
         "Generic JWT",
         "SendGrid API key",
+        "Google API key",
+        "Slack token",
+        "Slack webhook URL",
+        "npm access token",
+        "PyPI upload token",
+        "Twilio API key",
+        "Mailgun API key",
+        "Azure storage account key",
+        "Database connection string with credentials",
+        "Discord bot token",
+        "Telegram bot token",
+        "Square access token",
     }
 
 
@@ -98,6 +110,59 @@ def test_regex_detector_detects_private_key_from_test_keys_fixture_style() -> No
         (
             "sendgrid = SG." + ("D" * 22) + "." + ("E" * 43),
             "SendGrid API key",
+        ),
+        (
+            "google = AIza" + ("F" * 35),
+            "Google API key",
+        ),
+        (
+            "slack = xoxb-" + ("g" * 20),
+            "Slack token",
+        ),
+        (
+            "webhook = https://hooks.slack.com/services/T"
+            + ("0" * 9)
+            + "/B"
+            + ("1" * 9)
+            + "/"
+            + ("H" * 24),
+            "Slack webhook URL",
+        ),
+        (
+            "npm_token = npm_" + ("I" * 36),
+            "npm access token",
+        ),
+        (
+            "pypi_token = pypi-AgEIcHlwaS5vcmc" + ("J" * 60),
+            "PyPI upload token",
+        ),
+        (
+            "twilio = SK" + ("a" * 32),
+            "Twilio API key",
+        ),
+        (
+            "mailgun = key-" + ("K" * 32),
+            "Mailgun API key",
+        ),
+        (
+            "AccountKey=" + ("L" * 86) + "==",
+            "Azure storage account key",
+        ),
+        (
+            "DATABASE_URL=postgres://user:password@localhost:5432/app",
+            "Database connection string with credentials",
+        ),
+        (
+            "discord = M" + ("N" * 23) + "." + ("O" * 6) + "." + ("P" * 27),
+            "Discord bot token",
+        ),
+        (
+            "telegram = 123456789:" + ("Q" * 35),
+            "Telegram bot token",
+        ),
+        (
+            "square = sq0atp-" + ("R" * 22),
+            "Square access token",
         ),
     ],
 )
