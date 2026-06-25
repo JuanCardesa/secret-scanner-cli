@@ -64,7 +64,7 @@ class GitHubClient:
         self._clock = clock
         self._max_retries = max_retries
         self._rate_limited_until: float | None = None
-        self._request_lock = asyncio.Lock()
+        self._rate_limit_state_lock = asyncio.Lock()
 
         headers = {
             "Accept": "application/vnd.github+json",
@@ -221,36 +221,35 @@ class GitHubClient:
         *,
         params: dict[str, Any] | None = None,
     ) -> httpx.Response:
-        async with self._request_lock:
-            for attempt in range(self._max_retries + 1):
-                await self._respect_rate_limit()
+        for attempt in range(self._max_retries + 1):
+            await self._respect_rate_limit()
 
-                try:
-                    response = await self._client.request(
-                        method,
-                        path_or_url,
-                        params=params,
-                    )
-                except httpx.HTTPError as exc:
-                    raise GitHubClientError(
-                        f"GitHub request failed: {exc.__class__.__name__}",
-                        endpoint=path_or_url,
-                    ) from exc
+            try:
+                response = await self._client.request(
+                    method,
+                    path_or_url,
+                    params=params,
+                )
+            except httpx.HTTPError as exc:
+                raise GitHubClientError(
+                    f"GitHub request failed: {exc.__class__.__name__}",
+                    endpoint=path_or_url,
+                ) from exc
 
-                self._update_rate_limit_state(response.headers)
+            await self._update_rate_limit_state(response.headers)
 
-                if response.status_code in {403, 429} and _is_rate_limited(response):
-                    if attempt >= self._max_retries:
-                        raise _http_error(response)
-
-                    await self._sleep(_retry_delay(response.headers, self._clock))
-                    self._rate_limited_until = None
-                    continue
-
-                if response.status_code >= 400:
+            if response.status_code in {403, 429} and _is_rate_limited(response):
+                if attempt >= self._max_retries:
                     raise _http_error(response)
 
-                return response
+                await self._sleep(_retry_delay(response.headers, self._clock))
+                await self._clear_rate_limit_state()
+                continue
+
+            if response.status_code >= 400:
+                raise _http_error(response)
+
+            return response
 
         raise GitHubClientError(
             "GitHub request failed after retries",
@@ -258,21 +257,33 @@ class GitHubClient:
         )
 
     async def _respect_rate_limit(self) -> None:
-        if self._rate_limited_until is None:
+        async with self._rate_limit_state_lock:
+            rate_limited_until = self._rate_limited_until
+
+        if rate_limited_until is None:
             return
 
-        delay = self._rate_limited_until - self._clock()
+        delay = rate_limited_until - self._clock()
         if delay > 0:
             await self._sleep(delay)
 
-        self._rate_limited_until = None
+        async with self._rate_limit_state_lock:
+            if self._rate_limited_until == rate_limited_until:
+                self._rate_limited_until = None
 
-    def _update_rate_limit_state(self, headers: httpx.Headers) -> None:
+    async def _clear_rate_limit_state(self) -> None:
+        async with self._rate_limit_state_lock:
+            self._rate_limited_until = None
+
+    async def _update_rate_limit_state(self, headers: httpx.Headers) -> None:
         if headers.get("X-RateLimit-Remaining") != "0":
             return
 
         reset_at = _header_float(headers, "X-RateLimit-Reset")
-        if reset_at is not None and reset_at > self._clock():
+        if reset_at is None or reset_at <= self._clock():
+            return
+
+        async with self._rate_limit_state_lock:
             self._rate_limited_until = reset_at
 
 
