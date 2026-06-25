@@ -257,6 +257,7 @@ secret-scanner-cli/
 |-- .github/
 |   `-- workflows/
 |       |-- ci.yml
+|       |-- release.yml
 |       `-- secret-scan.yml
 |-- docs/
 |   |-- assets/
@@ -320,10 +321,12 @@ See [CHANGELOG.md](CHANGELOG.md) for release notes.
   `--write-baseline` (see [Usage](#usage)) work per invocation; there is no
   shared, versioned baseline store for a team, and a baseline file is only
   as trustworthy as the review behind the scan that produced it.
-- **The GitHub Action installs from source on every run.** `action.yml`
-  runs `pip install` against the checked-out action code instead of a
-  published package, so every job pays that install cost; there is no
-  PyPI release to install from instead.
+- **No release has been published yet.** [release.yml](.github/workflows/release.yml)
+  builds and publishes to PyPI on a `vX.Y.Z` tag push via Trusted
+  Publishing, and `action.yml` still installs from source on every run
+  until a release exists; see [CONTRIBUTING.md](CONTRIBUTING.md) for the
+  release process and the one-time PyPI Trusted Publisher setup it depends
+  on.
 - **Regex coverage is broad but not exhaustive.** `patterns.yaml` covers the
   most common providers (see [Features](#features)) but, unlike dedicated
   projects such as `gitleaks` or `trufflehog`, it has not been validated
@@ -331,10 +334,13 @@ See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ## Roadmap
 
-- Publish the `v0.1.0` release.
-- Add release automation for future versions.
-- Publish to PyPI so the GitHub Action (and everyone else) can install a
-  released version instead of building from source on every run.
+- Configure PyPI Trusted Publishing for this project and tag the `v0.1.0`
+  release, exercising [release.yml](.github/workflows/release.yml) for the
+  first time.
+- Point `action.yml` at the published PyPI package instead of installing
+  from source once a release exists.
+- Add a shared, versioned baseline workflow for teams (today, `--baseline`
+  is a local file per invocation; see Limitations above).
 
 ## Legal
 

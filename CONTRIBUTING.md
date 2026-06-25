@@ -64,6 +64,30 @@ Coverage is enforced in CI with `pytest-cov`.
 - [ ] Documentation is updated when behavior changes.
 - [ ] Commits are atomic and use Conventional Commits.
 
+## Release Process
+
+Releases are tag-triggered. Pushing a tag matching `v*.*.*` runs
+[.github/workflows/release.yml](.github/workflows/release.yml), which builds
+the sdist/wheel, publishes to PyPI via
+[Trusted Publishing](https://docs.pypi.org/trusted-publishers/) (no API
+token stored in this repo), and creates a GitHub release with the built
+artifacts attached.
+
+To cut a release:
+
+1. On `develop`, bump `version` in [pyproject.toml](pyproject.toml) and move
+   the relevant [CHANGELOG.md](CHANGELOG.md) `[Unreleased]` entries under a
+   new `[X.Y.Z] - YYYY-MM-DD` heading.
+2. Merge that into `main`.
+3. Tag the resulting commit on `main` as `vX.Y.Z` and push the tag.
+
+The workflow refuses to publish if the tag doesn't match the version in
+`pyproject.toml`. Before the first release, a maintainer must register this
+repository as a Trusted Publisher for the `secret-scanner-cli` PyPI project
+(PyPI supports doing this before the project's first upload via a pending
+publisher) and create a `pypi` environment in this repository's settings for
+the publish job to target.
+
 ## Security Expectations
 
 - Never print or store full secret values.
