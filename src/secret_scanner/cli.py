@@ -141,6 +141,23 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Disable ANSI colors in terminal output.",
     )
+    org_parser.add_argument(
+        "--include-history",
+        action="store_true",
+        help=(
+            "Also scan added lines from recent commit diffs in every repository, "
+            "catching secrets that were committed and later removed."
+        ),
+    )
+    org_parser.add_argument(
+        "--max-commits",
+        type=int,
+        default=DEFAULT_MAX_HISTORY_COMMITS,
+        help=(
+            "Number of recent commits to scan per repository when "
+            f"--include-history is set. Defaults to {DEFAULT_MAX_HISTORY_COMMITS}."
+        ),
+    )
     org_parser.set_defaults(handler=_scan_org)
 
     return parser
@@ -176,11 +193,24 @@ async def _scan_repo(args: argparse.Namespace) -> int:
 async def _scan_org(args: argparse.Namespace) -> int:
     async with GitHubClient() as github_client:
         scanner = RepositoryScanner(github_client)
+        exclude_patterns = parse_exclude_patterns(args.exclude)
         result = await scanner.scan_org(
             args.org,
             branch=args.branch,
-            exclude_patterns=parse_exclude_patterns(args.exclude),
+            exclude_patterns=exclude_patterns,
         )
+
+        if args.include_history:
+            history_result = await scanner.scan_org_history(
+                args.org,
+                branch=args.branch,
+                max_commits=args.max_commits,
+                exclude_patterns=exclude_patterns,
+            )
+            result = OrganizationScanResult(
+                findings=result.findings + history_result.findings,
+                failures=result.failures + history_result.failures,
+            )
 
     _emit_report(result.findings, args)
     _emit_scan_failures(result)
