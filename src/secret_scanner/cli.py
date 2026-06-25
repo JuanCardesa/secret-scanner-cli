@@ -79,7 +79,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     repo_parser.add_argument(
         "--output",
-        choices=("terminal", "json", "html"),
+        choices=("terminal", "json", "html", "sarif"),
         default="terminal",
         help="Report format. Defaults to terminal.",
     )
@@ -92,6 +92,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-color",
         action="store_true",
         help="Disable ANSI colors in terminal output.",
+    )
+    repo_parser.add_argument(
+        "--fail-on-findings",
+        action="store_true",
+        help=(
+            "Exit with status code 3 if the report (after --severity and "
+            "--baseline filtering) is non-empty. Useful for CI gating."
+        ),
     )
     repo_parser.add_argument(
         "--include-history",
@@ -150,7 +158,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     org_parser.add_argument(
         "--output",
-        choices=("terminal", "json", "html"),
+        choices=("terminal", "json", "html", "sarif"),
         default="terminal",
         help="Report format. Defaults to terminal.",
     )
@@ -163,6 +171,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-color",
         action="store_true",
         help="Disable ANSI colors in terminal output.",
+    )
+    org_parser.add_argument(
+        "--fail-on-findings",
+        action="store_true",
+        help=(
+            "Exit with status code 3 if the report (after --severity and "
+            "--baseline filtering) is non-empty. Useful for CI gating. Takes "
+            "precedence over a clean exit but not over partial-scan failures "
+            "(status code 2)."
+        ),
     )
     org_parser.add_argument(
         "--include-history",
@@ -222,7 +240,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     local_parser.add_argument(
         "--output",
-        choices=("terminal", "json", "html"),
+        choices=("terminal", "json", "html", "sarif"),
         default="terminal",
         help="Report format. Defaults to terminal.",
     )
@@ -235,6 +253,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-color",
         action="store_true",
         help="Disable ANSI colors in terminal output.",
+    )
+    local_parser.add_argument(
+        "--fail-on-findings",
+        action="store_true",
+        help=(
+            "Exit with status code 3 if the report (after --severity and "
+            "--baseline filtering) is non-empty. Useful for CI gating."
+        ),
     )
     local_parser.add_argument(
         "--baseline",
@@ -288,8 +314,8 @@ async def _scan_repo(args: argparse.Namespace) -> int:
         )
         return 0
 
-    _emit_report(_apply_baseline(findings, args.baseline), args)
-    return 0
+    reported = _emit_report(_apply_baseline(findings, args.baseline), args)
+    return 3 if args.fail_on_findings and reported else 0
 
 
 async def _scan_org(args: argparse.Namespace) -> int:
@@ -323,9 +349,11 @@ async def _scan_org(args: argparse.Namespace) -> int:
         _emit_scan_failures(result)
         return 2 if result.failures else 0
 
-    _emit_report(_apply_baseline(result.findings, args.baseline), args)
+    reported = _emit_report(_apply_baseline(result.findings, args.baseline), args)
     _emit_scan_failures(result)
-    return 2 if result.failures else 0
+    if result.failures:
+        return 2
+    return 3 if args.fail_on_findings and reported else 0
 
 
 async def _scan_local(args: argparse.Namespace) -> int:
@@ -342,8 +370,8 @@ async def _scan_local(args: argparse.Namespace) -> int:
         )
         return 0
 
-    _emit_report(_apply_baseline(findings, args.baseline), args)
-    return 0
+    reported = _emit_report(_apply_baseline(findings, args.baseline), args)
+    return 3 if args.fail_on_findings and reported else 0
 
 
 def _apply_baseline(
@@ -356,7 +384,7 @@ def _apply_baseline(
     return filter_accepted_findings(findings, accepted)
 
 
-def _emit_report(findings: list[Finding], args: argparse.Namespace) -> None:
+def _emit_report(findings: list[Finding], args: argparse.Namespace) -> list[Finding]:
     filtered_findings = filter_findings_by_severity(
         findings,
         _optional_confidence(args.severity),
@@ -368,6 +396,7 @@ def _emit_report(findings: list[Finding], args: argparse.Namespace) -> None:
         use_color=not args.no_color,
     )
     _write_output(output, args.output_file)
+    return filtered_findings
 
 
 def _emit_scan_failures(result: OrganizationScanResult) -> None:
@@ -388,7 +417,7 @@ def _optional_confidence(value: str | None) -> Confidence | None:
 
 
 def _output_format(value: str) -> OutputFormat:
-    if value in {"terminal", "json", "html"}:
+    if value in {"terminal", "json", "html", "sarif"}:
         return cast(OutputFormat, value)
 
     raise ValueError(f"unsupported output format: {value}")

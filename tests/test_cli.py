@@ -692,3 +692,117 @@ def test_scan_local_returns_error_for_missing_path(
 
     assert exit_code == 1
     assert "does not exist" in captured.err
+
+
+def test_scan_local_outputs_sarif(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "app.env").write_text(
+        "AWS_ACCESS_KEY_ID=AKIA0000000000000000\n", encoding="utf-8"
+    )
+
+    exit_code = cli.main(["scan", "local", str(tmp_path), "--output", "sarif"])
+    captured = capsys.readouterr()
+    report = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert report["version"] == "2.1.0"
+    assert report["runs"][0]["results"][0]["ruleId"] == "aws-access-key-regex"
+
+
+def test_scan_local_fail_on_findings_returns_three_when_findings_remain(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "app.env").write_text(
+        "AWS_ACCESS_KEY_ID=AKIA0000000000000000\n", encoding="utf-8"
+    )
+
+    exit_code = cli.main(
+        ["scan", "local", str(tmp_path), "--fail-on-findings", "--output", "json"]
+    )
+
+    assert exit_code == 3
+
+
+def test_scan_local_fail_on_findings_is_clean_when_no_findings_remain(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "app.env").write_text("nothing to see here\n", encoding="utf-8")
+
+    exit_code = cli.main(
+        ["scan", "local", str(tmp_path), "--fail-on-findings", "--output", "json"]
+    )
+
+    assert exit_code == 0
+
+
+def test_scan_local_fail_on_findings_respects_severity_filter(
+    tmp_path: Path,
+) -> None:
+    access_key = "AKIA" + "0000000000000000"
+    high_entropy_token = "qR8vN3pLx9/ZtY2mK5" + "sD7fG1hJ4aC6bE0wUiOoP"
+    (tmp_path / "app.env").write_text(
+        f"AWS_ACCESS_KEY_ID={access_key}\nAPP_SECRET={high_entropy_token}\n",
+        encoding="utf-8",
+    )
+
+    exit_code = cli.main(
+        [
+            "scan",
+            "local",
+            str(tmp_path),
+            "--fail-on-findings",
+            "--severity",
+            "low",
+            "--output",
+            "json",
+        ]
+    )
+
+    assert exit_code == 3
+
+
+def test_scan_repo_fail_on_findings_returns_three(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    exit_code = cli.main(
+        ["scan", "repo", "example/repo", "--fail-on-findings", "--output", "json"]
+    )
+
+    assert exit_code == 3
+
+
+def test_scan_repo_fail_on_findings_without_flag_stays_clean() -> None:
+    exit_code = cli.main(["scan", "repo", "example/repo", "--output", "json"])
+
+    assert exit_code == 0
+
+
+def test_scan_org_failures_take_precedence_over_fail_on_findings(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    FakeRepositoryScanner.org_result = OrganizationScanResult(
+        findings=[finding()],
+        failures=[
+            RepositoryScanFailure(repo="example-org/web", branch="main", error="boom")
+        ],
+    )
+
+    exit_code = cli.main(
+        ["scan", "org", "example-org", "--fail-on-findings", "--output", "json"]
+    )
+
+    assert exit_code == 2
+
+
+def test_scan_org_fail_on_findings_returns_three_without_failures() -> None:
+    FakeRepositoryScanner.org_result = OrganizationScanResult(
+        findings=[finding()],
+        failures=[],
+    )
+
+    exit_code = cli.main(
+        ["scan", "org", "example-org", "--fail-on-findings", "--output", "json"]
+    )
+
+    assert exit_code == 3

@@ -52,8 +52,10 @@ to clone and inspect.
 - Repository scan orchestration with bounded blob-fetch and repo concurrency.
 - CLI commands for scanning a single GitHub repository, all public repos in an
   organization, or a local directory/file without any GitHub API access.
-- Terminal, JSON, and HTML report rendering.
-- Confidence filtering with `--severity`.
+- Terminal, JSON, HTML, and SARIF 2.1.0 report rendering, the last for
+  GitHub code scanning ingestion.
+- Confidence filtering with `--severity` and CI gating with
+  `--fail-on-findings`.
 - Commit-history scanning with `--include-history` for both `scan repo` and
   `scan org`.
 - Baseline allowlist (`--baseline` / `--write-baseline`) to suppress
@@ -88,10 +90,15 @@ secret-scanner scan repo owner/repo --baseline baseline.json
 secret-scanner scan local .
 secret-scanner scan local /path/to/checkout --exclude "*.min.js,dist/*"
 secret-scanner scan local . --output json --output-file reports/local-report.json
+secret-scanner scan local . --output sarif --output-file results.sarif
+secret-scanner scan repo owner/repo --fail-on-findings
 ```
 
-The default output is a colored terminal table. JSON and HTML reports can be
-written to a file with `--output-file`.
+The default output is a colored terminal table. JSON, HTML, and SARIF
+reports can be written to a file with `--output-file`. `--fail-on-findings`
+exits with status code `3` if the report (after `--severity` and
+`--baseline` filtering) is non-empty, which is what makes any of these
+commands usable as a CI gate.
 
 For organization scans, each repository uses its GitHub `default_branch` unless
 `--branch` is provided. If one repository fails, the scanner records the failure,
@@ -270,9 +277,10 @@ See [CHANGELOG.md](CHANGELOG.md) for release notes.
   `--write-baseline` (see [Usage](#usage)) work per invocation; there is no
   shared, versioned baseline store for a team, and a baseline file is only
   as trustworthy as the review behind the scan that produced it.
-- **No CI/CD integration.** There is no reusable GitHub Action and no SARIF
-  output, so wiring this into a pull request check currently means scripting
-  the CLI directly.
+- **No packaged CI/CD integration yet.** SARIF output and `--fail-on-findings`
+  give CI systems what they need to gate a build, but there is still no
+  reusable GitHub Action; wiring this into a pull request check today means
+  scripting the CLI install and invocation yourself.
 - **Regex coverage is broad but not exhaustive.** `patterns.yaml` covers the
   most common providers (see [Features](#features)) but, unlike dedicated
   projects such as `gitleaks` or `trufflehog`, it has not been validated
@@ -282,7 +290,7 @@ See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 - Publish the `v0.1.0` release.
 - Add release automation for future versions.
-- Add a reusable GitHub Action and SARIF output for CI integration.
+- Add a reusable GitHub Action wrapping the CLI for CI integration.
 
 ## Legal
 
