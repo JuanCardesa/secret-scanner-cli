@@ -50,8 +50,8 @@ to clone and inspect.
 - Async GitHub REST API client with token auth, pagination, rate-limit backoff,
   and safe blob decoding.
 - Repository scan orchestration with bounded blob-fetch and repo concurrency.
-- CLI commands for scanning a single GitHub repository or all public repos in an
-  organization.
+- CLI commands for scanning a single GitHub repository, all public repos in an
+  organization, or a local directory/file without any GitHub API access.
 - Terminal, JSON, and HTML report rendering.
 - Confidence filtering with `--severity`.
 - Commit-history scanning with `--include-history` for both `scan repo` and
@@ -85,6 +85,9 @@ secret-scanner scan org organization-name --severity high --output json
 secret-scanner scan org organization-name --include-history --max-commits 200
 secret-scanner scan repo owner/repo --write-baseline baseline.json
 secret-scanner scan repo owner/repo --baseline baseline.json
+secret-scanner scan local .
+secret-scanner scan local /path/to/checkout --exclude "*.min.js,dist/*"
+secret-scanner scan local . --output json --output-file reports/local-report.json
 ```
 
 The default output is a colored terminal table. JSON and HTML reports can be
@@ -102,6 +105,19 @@ lines added by the most recent commits (50 by default, configurable with
 `--max-commits`) on that branch, so secrets that only ever existed in
 history are still caught. For `scan org`, `--max-commits` applies per
 repository.
+
+### Local scanning
+
+`scan local PATH` walks a local directory or file directly -- no GitHub
+API calls, no network access, no `GITHUB_TOKEN` required. It applies the
+same regex and entropy detectors, the same `--exclude` patterns, and the
+same `--severity`/`--baseline` handling as `scan repo`, which makes it
+usable both as a one-off audit of a checkout you already have on disk and
+as the entry point for a pre-commit hook (point it at the repository root
+before every commit). `.git`, `node_modules`, virtual environments, and
+common cache directories are always skipped, on top of whatever
+`--exclude` patterns you pass. `--include-history` is not available here:
+there is no API call to fetch commit diffs from, only the files on disk.
 
 ### Baseline allowlist
 
@@ -230,8 +246,11 @@ See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ## Limitations
 
-- **No local or pre-commit scanning.** The scanner only talks to the GitHub
-  REST API; it cannot check a working tree or a diff before you push.
+- **`scan local` has no history mode.** It only walks whatever is on disk
+  right now; it cannot inspect git history the way `scan repo
+  --include-history` can, since that requires GitHub API calls to fetch
+  commit diffs. Use `scan repo --include-history` against the same
+  repository once it is pushed if you need that.
 - **History scanning multiplies API calls per repository it covers.**
   `--include-history` on `scan org` runs commit-history scanning for every
   repository in the organization, which can be expensive in both API calls
