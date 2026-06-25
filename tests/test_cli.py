@@ -26,7 +26,9 @@ class FakeGitHubClient:
 class FakeRepositoryScanner:
     calls: list[dict[str, Any]] = []
     findings: list[Finding] = []
+    history_findings: list[Finding] = []
     org_result: OrganizationScanResult | None = None
+    org_history_result: OrganizationScanResult | None = None
 
     def __init__(self, github_client: FakeGitHubClient) -> None:
         self.github_client = github_client
@@ -47,6 +49,24 @@ class FakeRepositoryScanner:
         )
         return self.findings
 
+    async def scan_repo_history(
+        self,
+        repo_full_name: str,
+        *,
+        branch: str = "main",
+        max_commits: int = 50,
+        exclude_patterns: tuple[str, ...] = (),
+    ) -> list[Finding]:
+        self.__class__.calls.append(
+            {
+                "repo_history_full_name": repo_full_name,
+                "branch": branch,
+                "max_commits": max_commits,
+                "exclude_patterns": exclude_patterns,
+            }
+        )
+        return self.history_findings
+
     async def scan_org(
         self,
         org: str,
@@ -65,6 +85,27 @@ class FakeRepositoryScanner:
             return self.org_result
 
         return OrganizationScanResult(findings=self.findings, failures=[])
+
+    async def scan_org_history(
+        self,
+        org: str,
+        *,
+        branch: str | None = None,
+        max_commits: int = 50,
+        exclude_patterns: tuple[str, ...] = (),
+    ) -> OrganizationScanResult:
+        self.__class__.calls.append(
+            {
+                "org_history": org,
+                "branch": branch,
+                "max_commits": max_commits,
+                "exclude_patterns": exclude_patterns,
+            }
+        )
+        if self.org_history_result is not None:
+            return self.org_history_result
+
+        return OrganizationScanResult(findings=self.history_findings, failures=[])
 
 
 def finding(*, confidence: Confidence = "high") -> Finding:
@@ -86,7 +127,9 @@ def fake_scanner(monkeypatch: pytest.MonkeyPatch) -> None:
     FakeGitHubClient.closed = False
     FakeRepositoryScanner.calls = []
     FakeRepositoryScanner.findings = [finding()]
+    FakeRepositoryScanner.history_findings = []
     FakeRepositoryScanner.org_result = None
+    FakeRepositoryScanner.org_history_result = None
     monkeypatch.setattr(cli, "GitHubClient", FakeGitHubClient)
     monkeypatch.setattr(cli, "RepositoryScanner", FakeRepositoryScanner)
 
@@ -258,6 +301,93 @@ def test_scan_org_allows_branch_override_and_json_output(
             "exclude_patterns": (),
         }
     ]
+
+
+def test_scan_repo_with_include_history_merges_findings(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    FakeRepositoryScanner.findings = [finding(confidence="high")]
+    FakeRepositoryScanner.history_findings = [finding(confidence="medium")]
+
+    exit_code = cli.main(
+        [
+            "scan",
+            "repo",
+            "example/repo",
+            "--include-history",
+            "--max-commits",
+            "10",
+            "--output",
+            "json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    report = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert [item["confidence"] for item in report["findings"]] == ["high", "medium"]
+    assert {
+        "repo_history_full_name": "example/repo",
+        "branch": "main",
+        "max_commits": 10,
+        "exclude_patterns": (),
+    } in FakeRepositoryScanner.calls
+
+
+def test_scan_repo_without_include_history_skips_history_scan() -> None:
+    cli.main(["scan", "repo", "example/repo", "--output", "json"])
+
+    assert all(
+        "repo_history_full_name" not in call for call in FakeRepositoryScanner.calls
+    )
+
+
+def test_scan_org_with_include_history_merges_findings_and_failures(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    FakeRepositoryScanner.org_result = OrganizationScanResult(
+        findings=[finding(confidence="high")],
+        failures=[
+            RepositoryScanFailure(
+                repo="example-org/tree-scan", branch="main", error="boom"
+            )
+        ],
+    )
+    FakeRepositoryScanner.org_history_result = OrganizationScanResult(
+        findings=[finding(confidence="medium")],
+        failures=[
+            RepositoryScanFailure(
+                repo="example-org/history-scan", branch="main", error="kaboom"
+            )
+        ],
+    )
+
+    exit_code = cli.main(
+        [
+            "scan",
+            "org",
+            "example-org",
+            "--include-history",
+            "--max-commits",
+            "25",
+            "--output",
+            "json",
+            "--no-color",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    report = json.loads(captured.out)
+
+    assert exit_code == 2
+    assert [item["confidence"] for item in report["findings"]] == ["high", "medium"]
+    assert {
+        "org_history": "example-org",
+        "branch": None,
+        "max_commits": 25,
+        "exclude_patterns": (),
+    } in FakeRepositoryScanner.calls
 
 
 def test_scan_org_reports_partial_failures(

@@ -27,6 +27,7 @@ class FakeGitHubClient:
         branch_shas_by_repo: dict[tuple[str, str], str | Exception] | None = None,
         commit_shas: list[str] | None = None,
         commit_files: dict[str, list[CommitFile]] | None = None,
+        commit_shas_by_repo: dict[str, list[str] | Exception] | None = None,
     ) -> None:
         self.tree = tree
         self.blobs = blobs
@@ -36,6 +37,7 @@ class FakeGitHubClient:
         self.branch_shas_by_repo = branch_shas_by_repo or {}
         self.commit_shas = commit_shas or []
         self.commit_files = commit_files or {}
+        self.commit_shas_by_repo = commit_shas_by_repo or {}
         self.org_calls: list[str] = []
         self.branch_calls: list[tuple[str, str, str]] = []
         self.tree_calls: list[tuple[str, str, str, bool]] = []
@@ -105,6 +107,12 @@ class FakeGitHubClient:
         max_count: int,
     ) -> list[str]:
         self.list_commit_shas_calls.append((owner, repo, branch, max_count))
+        if repo in self.commit_shas_by_repo:
+            result = self.commit_shas_by_repo[repo]
+            if isinstance(result, Exception):
+                raise result
+            return result[:max_count]
+
         return self.commit_shas[:max_count]
 
     async def get_commit_files(
@@ -462,6 +470,76 @@ async def test_scan_org_limits_repository_concurrency() -> None:
 
     assert len(client.branch_calls) == 3
     assert client.max_active_branch_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_scan_org_history_aggregates_findings_across_repos() -> None:
+    first_secret = "AKIA" + "1111111111111111"
+    second_secret = "AKIA" + "2222222222222222"
+    client = FakeGitHubClient(
+        tree=GitTree(sha="unused", truncated=False, tree=[]),
+        blobs={},
+        repos=[
+            github_repo("api", default_branch="main"),
+            github_repo("web", default_branch="develop"),
+        ],
+        commit_shas_by_repo={
+            "api": ["commit-api"],
+            "web": ["commit-web"],
+        },
+        commit_files={
+            "commit-api": [
+                CommitFile(
+                    filename="api.env",
+                    status="modified",
+                    patch=f"@@ -1,1 +1,1 @@\n+AWS_ACCESS_KEY_ID={first_secret}\n",
+                ),
+            ],
+            "commit-web": [
+                CommitFile(
+                    filename="web.env",
+                    status="modified",
+                    patch=f"@@ -1,1 +1,1 @@\n+AWS_ACCESS_KEY_ID={second_secret}\n",
+                ),
+            ],
+        },
+    )
+    scanner = RepositoryScanner(client)
+
+    result = await scanner.scan_org_history("example-org", max_commits=10)
+
+    assert client.org_calls == ["example-org"]
+    assert {call[2] for call in client.list_commit_shas_calls} == {"main", "develop"}
+    assert {finding.repo for finding in result.findings} == {
+        "example-org/api",
+        "example-org/web",
+    }
+    assert result.failures == []
+
+
+@pytest.mark.asyncio
+async def test_scan_org_history_records_per_repo_failures() -> None:
+    client = FakeGitHubClient(
+        tree=GitTree(sha="unused", truncated=False, tree=[]),
+        blobs={},
+        repos=[
+            github_repo("api", default_branch="main"),
+            github_repo("web", default_branch="main"),
+        ],
+        commit_shas_by_repo={
+            "api": ["commit-api"],
+            "web": ValueError("boom"),
+        },
+        commit_files={"commit-api": []},
+    )
+    scanner = RepositoryScanner(client)
+
+    result = await scanner.scan_org_history("example-org")
+
+    assert result.findings == []
+    assert len(result.failures) == 1
+    assert result.failures[0].repo == "example-org/web"
+    assert result.failures[0].error == "boom"
 
 
 @pytest.mark.parametrize(

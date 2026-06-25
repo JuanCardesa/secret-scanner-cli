@@ -277,6 +277,66 @@ class RepositoryScanner:
 
         return findings
 
+    async def scan_org_history(
+        self,
+        org: str,
+        *,
+        branch: str | None = None,
+        max_commits: int = DEFAULT_MAX_HISTORY_COMMITS,
+        exclude_patterns: Iterable[str] = (),
+    ) -> OrganizationScanResult:
+        repos = await self._github_client.list_org_repos(org)
+
+        findings: list[Finding] = []
+        failures: list[RepositoryScanFailure] = []
+        for chunk in chunked(repos, self._max_repo_concurrency):
+            results = await asyncio.gather(
+                *(
+                    self._scan_org_repo_history(
+                        repo,
+                        branch=branch,
+                        max_commits=max_commits,
+                        exclude_patterns=exclude_patterns,
+                    )
+                    for repo in chunk
+                )
+            )
+            for result in results:
+                findings.extend(result.findings)
+                failures.extend(result.failures)
+
+        return OrganizationScanResult(findings=findings, failures=failures)
+
+    async def _scan_org_repo_history(
+        self,
+        repo: GitHubRepo,
+        *,
+        branch: str | None,
+        max_commits: int,
+        exclude_patterns: Iterable[str],
+    ) -> OrganizationScanResult:
+        target_branch = branch or repo.default_branch or "main"
+        try:
+            findings = await self.scan_repo_history(
+                repo.full_name,
+                branch=target_branch,
+                max_commits=max_commits,
+                exclude_patterns=exclude_patterns,
+            )
+        except Exception as exc:
+            return OrganizationScanResult(
+                findings=[],
+                failures=[
+                    RepositoryScanFailure(
+                        repo=repo.full_name,
+                        branch=target_branch,
+                        error=str(exc),
+                    )
+                ],
+            )
+
+        return OrganizationScanResult(findings=findings, failures=[])
+
     async def _scan_commit(
         self,
         owner: str,

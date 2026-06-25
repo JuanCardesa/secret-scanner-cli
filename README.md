@@ -78,6 +78,7 @@ secret-scanner scan repo owner/repo --include-history --max-commits 200
 secret-scanner scan org organization-name
 secret-scanner scan org organization-name --branch release
 secret-scanner scan org organization-name --severity high --output json
+secret-scanner scan org organization-name --include-history --max-commits 200
 ```
 
 The default output is a colored terminal table. JSON and HTML reports can be
@@ -88,12 +89,13 @@ For organization scans, each repository uses its GitHub `default_branch` unless
 continues with the remaining repositories, prints a warning to stderr, and exits
 with status code `2` to signal a partial scan.
 
-By default, `scan repo` only inspects the current tree at the target branch's
-latest commit, so a secret that was committed and later removed will not be
-found. Pass `--include-history` to additionally scan the lines added by the
-most recent commits (50 by default, configurable with `--max-commits`) on
-that branch, so secrets that only ever existed in history are still caught.
-This is not yet available for `scan org`.
+By default, `scan repo` and `scan org` only inspect the current tree at each
+target branch's latest commit, so a secret that was committed and later
+removed will not be found. Pass `--include-history` to additionally scan the
+lines added by the most recent commits (50 by default, configurable with
+`--max-commits`) on that branch, so secrets that only ever existed in
+history are still caught. For `scan org`, `--max-commits` applies per
+repository.
 
 ## Example Results
 
@@ -212,10 +214,11 @@ See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 - **No local or pre-commit scanning.** The scanner only talks to the GitHub
   REST API; it cannot check a working tree or a diff before you push.
-- **`scan org --include-history` does not exist yet.** History scanning is
-  only wired into `scan repo`; running it against every repository in a
-  large organization would multiply API calls and is left for a future
-  release.
+- **History scanning multiplies API calls per repository it covers.**
+  `--include-history` on `scan org` runs commit-history scanning for every
+  repository in the organization, which can be expensive in both API calls
+  and rate-limit budget for large organizations; tune `--max-commits` down
+  accordingly.
 - **Very large trees and commits are not paginated.** GitHub truncates a
   recursive tree listing past a repository-size threshold, and a single
   commit's file list past roughly 300 changed files; the scanner currently
@@ -241,7 +244,6 @@ See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 - Publish the `v0.1.0` release.
 - Add release automation for future versions.
-- Wire `--include-history` into `scan org`.
 - Add a baseline/allowlist mechanism for accepted findings.
 - Add a reusable GitHub Action and SARIF output for CI integration.
 
