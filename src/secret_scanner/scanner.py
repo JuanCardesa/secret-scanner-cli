@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import fnmatch
+import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import PurePosixPath
@@ -11,11 +12,13 @@ from typing import Protocol, TypeVar
 
 from secret_scanner.detectors.entropy_detector import EntropyDetector
 from secret_scanner.detectors.regex_detector import RegexDetector
-from secret_scanner.models import Finding, GitHubRepo, GitTree, GitTreeItem
+from secret_scanner.models import CommitFile, Finding, GitHubRepo, GitTree, GitTreeItem
 
 DEFAULT_MAX_CONCURRENCY = 8
 DEFAULT_MAX_FILE_SIZE_BYTES = 1_000_000
 DEFAULT_MAX_REPO_CONCURRENCY = 2
+DEFAULT_MAX_HISTORY_COMMITS = 50
+HUNK_HEADER_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 DEFAULT_EXCLUDE_PATTERNS = (
     "package-lock.json",
     "npm-shrinkwrap.json",
@@ -49,6 +52,23 @@ class GitHubRepositoryClient(Protocol):
 
     async def get_blob(self, owner: str, repo: str, blob_sha: str) -> str | None:
         """Return decoded text content for a blob, or None for non-text blobs."""
+        ...
+
+    async def list_commit_shas(
+        self,
+        owner: str,
+        repo: str,
+        branch: str,
+        *,
+        max_count: int,
+    ) -> list[str]:
+        """Return up to max_count commit SHAs reachable from a branch, newest first."""
+        ...
+
+    async def get_commit_files(
+        self, owner: str, repo: str, sha: str
+    ) -> list[CommitFile]:
+        """Return the files changed by a commit, including unified diff patches."""
         ...
 
 
@@ -198,6 +218,98 @@ class RepositoryScanner:
 
         return findings
 
+    async def scan_repo_history(
+        self,
+        repo_full_name: str,
+        *,
+        branch: str = "main",
+        max_commits: int = DEFAULT_MAX_HISTORY_COMMITS,
+        exclude_patterns: Iterable[str] = (),
+    ) -> list[Finding]:
+        owner, repo_name = parse_repo_full_name(repo_full_name)
+        return await self.scan_repository_history(
+            owner,
+            repo_name,
+            branch=branch,
+            max_commits=max_commits,
+            exclude_patterns=exclude_patterns,
+        )
+
+    async def scan_repository_history(
+        self,
+        owner: str,
+        repo_name: str,
+        *,
+        branch: str = "main",
+        max_commits: int = DEFAULT_MAX_HISTORY_COMMITS,
+        exclude_patterns: Iterable[str] = (),
+    ) -> list[Finding]:
+        """Scan the lines added by the most recent commits on a branch.
+
+        Unlike scan_repository, which only inspects the current tree, this
+        walks commit diffs so secrets that were committed and later removed
+        are still detected.
+        """
+        repo_full_name = f"{owner}/{repo_name}"
+        commit_shas = await self._github_client.list_commit_shas(
+            owner,
+            repo_name,
+            branch,
+            max_count=max_commits,
+        )
+        active_excludes = self._exclude_patterns + tuple(exclude_patterns)
+
+        findings: list[Finding] = []
+        for chunk in chunked(commit_shas, self._max_concurrency):
+            results = await asyncio.gather(
+                *(
+                    self._scan_commit(
+                        owner,
+                        repo_name,
+                        repo_full_name,
+                        commit_sha,
+                        active_excludes,
+                    )
+                    for commit_sha in chunk
+                )
+            )
+            findings.extend(finding for group in results for finding in group)
+
+        return findings
+
+    async def _scan_commit(
+        self,
+        owner: str,
+        repo_name: str,
+        repo_full_name: str,
+        commit_sha: str,
+        exclude_patterns: Sequence[str],
+    ) -> list[Finding]:
+        files = await self._github_client.get_commit_files(owner, repo_name, commit_sha)
+
+        findings: list[Finding] = []
+        for file in files:
+            if file.patch is None or path_matches_any_pattern(
+                file.filename, exclude_patterns
+            ):
+                continue
+
+            virtual_content = added_lines_virtual_content(file.patch)
+            if not virtual_content:
+                continue
+
+            for detector in (self._regex_detector, self._entropy_detector):
+                findings.extend(
+                    detector.scan(
+                        virtual_content,
+                        repo=repo_full_name,
+                        file_path=file.filename,
+                        commit_sha=commit_sha,
+                    )
+                )
+
+        return findings
+
     async def _scan_org_repo(
         self,
         repo: GitHubRepo,
@@ -300,4 +412,48 @@ def path_matches_any_pattern(path: str, patterns: Iterable[str]) -> bool:
     return any(
         fnmatch.fnmatch(normalized_path, pattern) or fnmatch.fnmatch(file_name, pattern)
         for pattern in patterns
+    )
+
+
+def added_lines_virtual_content(patch: str) -> str:
+    """Reconstruct a sparse file from a unified diff's added lines only.
+
+    Each added line is placed at the line number it occupies in the new
+    version of the file (taken from the hunk header), with every other line
+    left blank. This lets the existing line-counting detectors report a
+    finding's real position in that commit's file without scanning context
+    or removed lines, which would otherwise duplicate findings already seen
+    in neighboring commits.
+    """
+    added_by_line: dict[int, str] = {}
+    current_new_line = 0
+    in_hunk = False
+
+    for line in patch.splitlines():
+        header_match = HUNK_HEADER_RE.match(line)
+        if header_match:
+            current_new_line = int(header_match.group(1)) - 1
+            in_hunk = True
+            continue
+
+        if not in_hunk:
+            continue
+
+        if line.startswith("+++") or line.startswith("---") or line.startswith("\\"):
+            continue
+
+        if line.startswith("+"):
+            current_new_line += 1
+            added_by_line[current_new_line] = line[1:]
+        elif line.startswith("-"):
+            continue
+        else:
+            current_new_line += 1
+
+    if not added_by_line:
+        return ""
+
+    last_line = max(added_by_line)
+    return "\n".join(
+        added_by_line.get(line_number, "") for line_number in range(1, last_line + 1)
     )

@@ -4,10 +4,11 @@ import asyncio
 
 import pytest
 
-from secret_scanner.models import GitHubRepo, GitTree, GitTreeItem
+from secret_scanner.models import CommitFile, GitHubRepo, GitTree, GitTreeItem
 from secret_scanner.scanner import (
     RepositoryScanError,
     RepositoryScanner,
+    added_lines_virtual_content,
     parse_exclude_patterns,
     parse_repo_full_name,
     path_matches_any_pattern,
@@ -24,6 +25,8 @@ class FakeGitHubClient:
         repos: list[GitHubRepo] | None = None,
         trees_by_repo: dict[str, GitTree] | None = None,
         branch_shas_by_repo: dict[tuple[str, str], str | Exception] | None = None,
+        commit_shas: list[str] | None = None,
+        commit_files: dict[str, list[CommitFile]] | None = None,
     ) -> None:
         self.tree = tree
         self.blobs = blobs
@@ -31,10 +34,14 @@ class FakeGitHubClient:
         self.repos = repos or []
         self.trees_by_repo = trees_by_repo or {}
         self.branch_shas_by_repo = branch_shas_by_repo or {}
+        self.commit_shas = commit_shas or []
+        self.commit_files = commit_files or {}
         self.org_calls: list[str] = []
         self.branch_calls: list[tuple[str, str, str]] = []
         self.tree_calls: list[tuple[str, str, str, bool]] = []
         self.blob_calls: list[tuple[str, str, str]] = []
+        self.list_commit_shas_calls: list[tuple[str, str, str, int]] = []
+        self.get_commit_files_calls: list[tuple[str, str, str]] = []
         self.active_branch_calls = 0
         self.max_active_branch_calls = 0
         self.release_branch_calls: asyncio.Event | None = None
@@ -88,6 +95,23 @@ class FakeGitHubClient:
             return self.blobs[blob_sha]
         finally:
             self.active_blob_calls -= 1
+
+    async def list_commit_shas(
+        self,
+        owner: str,
+        repo: str,
+        branch: str,
+        *,
+        max_count: int,
+    ) -> list[str]:
+        self.list_commit_shas_calls.append((owner, repo, branch, max_count))
+        return self.commit_shas[:max_count]
+
+    async def get_commit_files(
+        self, owner: str, repo: str, sha: str
+    ) -> list[CommitFile]:
+        self.get_commit_files_calls.append((owner, repo, sha))
+        return self.commit_files.get(sha, [])
 
 
 def tree_item(
@@ -465,3 +489,108 @@ def test_repository_scanner_rejects_invalid_limits(
             max_concurrency=max_concurrency,
             max_repo_concurrency=0 if message == "max_repo_concurrency" else 1,
         )
+
+
+def test_added_lines_virtual_content_maps_added_lines_to_real_line_numbers() -> None:
+    patch = (
+        "@@ -1,2 +1,3 @@\n"
+        " line one unchanged\n"
+        "-line two old\n"
+        "+AWS_ACCESS_KEY_ID=AKIA0000000000000000\n"
+        " line three unchanged\n"
+    )
+
+    virtual_content = added_lines_virtual_content(patch)
+    lines = virtual_content.splitlines()
+
+    assert lines[0] == ""
+    assert lines[1] == "AWS_ACCESS_KEY_ID=AKIA0000000000000000"
+
+
+def test_added_lines_virtual_content_returns_empty_when_nothing_added() -> None:
+    patch = "@@ -1,2 +1,1 @@\n line one unchanged\n-line two removed\n"
+
+    assert added_lines_virtual_content(patch) == ""
+
+
+def test_added_lines_virtual_content_handles_multiple_hunks() -> None:
+    patch = (
+        "@@ -1,1 +1,1 @@\n+first added\n@@ -10,1 +10,2 @@\n unchanged\n+second added\n"
+    )
+
+    virtual_content = added_lines_virtual_content(patch)
+    lines = virtual_content.splitlines()
+
+    assert lines[0] == "first added"
+    assert lines[-1] == "second added"
+
+
+@pytest.mark.asyncio
+async def test_scan_repository_history_detects_secrets_in_added_lines() -> None:
+    access_key = "AKIA" + "0" * 16
+    patch = f"@@ -1,1 +1,2 @@\n unchanged line\n+AWS_ACCESS_KEY_ID={access_key}\n"
+    client = FakeGitHubClient(
+        tree=GitTree(sha="tree-sha", truncated=False, tree=[]),
+        blobs={},
+        commit_shas=["commit-2", "commit-1"],
+        commit_files={
+            "commit-2": [
+                CommitFile(
+                    filename="config/settings.env", status="modified", patch=patch
+                ),
+            ],
+            "commit-1": [
+                CommitFile(filename="README.md", status="modified", patch=None),
+            ],
+        },
+    )
+    scanner = RepositoryScanner(client)
+
+    findings = await scanner.scan_repository_history("example", "repo", max_commits=10)
+
+    assert client.list_commit_shas_calls == [("example", "repo", "main", 10)]
+    assert {sha for *_, sha in client.get_commit_files_calls} == {
+        "commit-2",
+        "commit-1",
+    }
+    assert len(findings) == 1
+    finding = findings[0]
+    assert finding.pattern_name == "AWS access key"
+    assert finding.commit_sha == "commit-2"
+    assert finding.file_path == "config/settings.env"
+    assert finding.line_number == 2
+    assert "*" in finding.matched_text
+
+
+@pytest.mark.asyncio
+async def test_scan_repository_history_honors_exclude_patterns() -> None:
+    patch = "@@ -1,1 +1,1 @@\n+AWS_ACCESS_KEY_ID=AKIA1111111111111111\n"
+    client = FakeGitHubClient(
+        tree=GitTree(sha="tree-sha", truncated=False, tree=[]),
+        blobs={},
+        commit_shas=["commit-1"],
+        commit_files={
+            "commit-1": [
+                CommitFile(filename="dist/app.min.js", status="modified", patch=patch),
+            ],
+        },
+    )
+    scanner = RepositoryScanner(client)
+
+    findings = await scanner.scan_repository_history("example", "repo")
+
+    assert findings == []
+
+
+@pytest.mark.asyncio
+async def test_scan_repo_history_parses_owner_repo_and_passes_branch() -> None:
+    client = FakeGitHubClient(
+        tree=GitTree(sha="tree-sha", truncated=False, tree=[]),
+        blobs={},
+        commit_shas=[],
+    )
+    scanner = RepositoryScanner(client)
+
+    await scanner.scan_repo_history("example/repo", branch="release", max_commits=5)
+
+    assert client.list_commit_shas_calls == [("example", "repo", "release", 5)]
