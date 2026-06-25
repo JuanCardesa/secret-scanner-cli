@@ -53,7 +53,6 @@ def test_regex_detector_detects_aws_access_key_from_test_keys_fixture() -> None:
         repo=TEST_REPO,
         file_path="new_key",
         commit_sha="fbc14303ffbf8fb1c2c1914e8dda7d0121633aca",
-        author_email="counter <counter@counters-MacBook-Air.local>",
     )
 
     assert len(findings) == 1

@@ -93,7 +93,6 @@ class RegexDetector:
         repo: str = "",
         file_path: str = "",
         commit_sha: str = "",
-        author_email: str = "",
     ) -> list[Finding]:
         findings: list[Finding] = []
         seen: set[tuple[str, int, str]] = set()
@@ -120,7 +119,6 @@ class RegexDetector:
                         pattern_name=pattern.name,
                         confidence=pattern.confidence,
                         commit_sha=commit_sha,
-                        author_email=author_email,
                     )
                 )
 
@@ -134,7 +132,6 @@ def scan_content(
     repo: str = "",
     file_path: str = "",
     commit_sha: str = "",
-    author_email: str = "",
 ) -> list[Finding]:
     detector = RegexDetector(list(patterns) if patterns is not None else None)
     return detector.scan(
@@ -142,7 +139,6 @@ def scan_content(
         repo=repo,
         file_path=file_path,
         commit_sha=commit_sha,
-        author_email=author_email,
     )
 
 

@@ -27,7 +27,6 @@ class Finding:
     pattern_name: str
     confidence: Confidence
     commit_sha: str
-    author_email: str
 
 
 @dataclass(frozen=True)
