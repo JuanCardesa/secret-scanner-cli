@@ -25,7 +25,6 @@ def finding(
         pattern_name="AWS Access Key ID",
         confidence=confidence,
         commit_sha="abc123",
-        author_email="author@example.com",
     )
 
 
@@ -43,7 +42,6 @@ def test_render_json_returns_structured_report() -> None:
                 "pattern_name": "AWS Access Key ID",
                 "confidence": "high",
                 "commit_sha": "abc123",
-                "author_email": "author@example.com",
             }
         ]
     }

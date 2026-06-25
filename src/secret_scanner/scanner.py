@@ -60,7 +60,6 @@ class Detector(Protocol):
         repo: str = "",
         file_path: str = "",
         commit_sha: str = "",
-        author_email: str = "",
     ) -> list[Finding]:
         """Scan content and return findings."""
         ...
@@ -116,7 +115,6 @@ class RepositoryScanner:
         *,
         branch: str = "main",
         exclude_patterns: Iterable[str] = (),
-        author_email: str = "",
     ) -> list[Finding]:
         owner, repo_name = parse_repo_full_name(repo_full_name)
         return await self.scan_repository(
@@ -124,7 +122,6 @@ class RepositoryScanner:
             repo_name,
             branch=branch,
             exclude_patterns=exclude_patterns,
-            author_email=author_email,
         )
 
     async def scan_org(
@@ -133,7 +130,6 @@ class RepositoryScanner:
         *,
         branch: str | None = None,
         exclude_patterns: Iterable[str] = (),
-        author_email: str = "",
     ) -> OrganizationScanResult:
         repos = await self._github_client.list_org_repos(org)
 
@@ -146,7 +142,6 @@ class RepositoryScanner:
                         repo,
                         branch=branch,
                         exclude_patterns=exclude_patterns,
-                        author_email=author_email,
                     )
                     for repo in chunk
                 )
@@ -164,7 +159,6 @@ class RepositoryScanner:
         *,
         branch: str = "main",
         exclude_patterns: Iterable[str] = (),
-        author_email: str = "",
     ) -> list[Finding]:
         repo_full_name = f"{owner}/{repo_name}"
         commit_sha = await self._github_client.get_branch_sha(owner, repo_name, branch)
@@ -196,7 +190,6 @@ class RepositoryScanner:
                         repo_full_name,
                         item,
                         commit_sha=commit_sha,
-                        author_email=author_email,
                     )
                     for item in chunk
                 )
@@ -211,7 +204,6 @@ class RepositoryScanner:
         *,
         branch: str | None,
         exclude_patterns: Iterable[str],
-        author_email: str,
     ) -> OrganizationScanResult:
         target_branch = branch or repo.default_branch or "main"
         try:
@@ -219,7 +211,6 @@ class RepositoryScanner:
                 repo.full_name,
                 branch=target_branch,
                 exclude_patterns=exclude_patterns,
-                author_email=author_email,
             )
         except Exception as exc:
             return OrganizationScanResult(
@@ -256,7 +247,6 @@ class RepositoryScanner:
         item: GitTreeItem,
         *,
         commit_sha: str,
-        author_email: str,
     ) -> list[Finding]:
         content = await self._github_client.get_blob(owner, repo_name, item.sha)
 
@@ -271,7 +261,6 @@ class RepositoryScanner:
                     repo=repo_full_name,
                     file_path=item.path,
                     commit_sha=commit_sha,
-                    author_email=author_email,
                 )
             )
 

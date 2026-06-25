@@ -37,14 +37,12 @@ class FakeRepositoryScanner:
         *,
         branch: str = "main",
         exclude_patterns: tuple[str, ...] = (),
-        author_email: str = "",
     ) -> list[Finding]:
         self.__class__.calls.append(
             {
                 "repo_full_name": repo_full_name,
                 "branch": branch,
                 "exclude_patterns": exclude_patterns,
-                "author_email": author_email,
             }
         )
         return self.findings
@@ -55,14 +53,12 @@ class FakeRepositoryScanner:
         *,
         branch: str | None = None,
         exclude_patterns: tuple[str, ...] = (),
-        author_email: str = "",
     ) -> OrganizationScanResult:
         self.__class__.calls.append(
             {
                 "org": org,
                 "branch": branch,
                 "exclude_patterns": exclude_patterns,
-                "author_email": author_email,
             }
         )
         if self.org_result is not None:
@@ -81,7 +77,6 @@ def finding(*, confidence: Confidence = "high") -> Finding:
         pattern_name="AWS Access Key ID",
         confidence=confidence,
         commit_sha="abc123",
-        author_email="",
     )
 
 
@@ -123,7 +118,6 @@ def test_scan_repo_outputs_terminal_report(capsys: pytest.CaptureFixture[str]) -
             "repo_full_name": "example/repo",
             "branch": "develop",
             "exclude_patterns": ("*.min.js", "package-lock.json"),
-            "author_email": "",
         }
     ]
 
@@ -226,7 +220,6 @@ def test_scan_org_uses_default_branches_when_branch_is_omitted(
             "org": "example-org",
             "branch": None,
             "exclude_patterns": ("*.min.js",),
-            "author_email": "",
         }
     ]
 
@@ -263,7 +256,6 @@ def test_scan_org_allows_branch_override_and_json_output(
             "org": "example-org",
             "branch": "release",
             "exclude_patterns": (),
-            "author_email": "",
         }
     ]
 
@@ -301,7 +293,6 @@ def test_scan_repo_returns_error_for_scanner_failure(
             *,
             branch: str = "main",
             exclude_patterns: tuple[str, ...] = (),
-            author_email: str = "",
         ) -> list[Finding]:
             raise ValueError("repo_full_name must use the 'owner/repo' format")
 

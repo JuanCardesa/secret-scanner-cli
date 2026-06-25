@@ -174,7 +174,6 @@ async def test_scan_repo_combines_regex_and_entropy_findings() -> None:
     findings = await scanner.scan_repo(
         "example/repo",
         branch="develop",
-        author_email="author@example.com",
     )
 
     assert client.branch_calls == [("example", "repo", "develop")]
@@ -183,7 +182,6 @@ async def test_scan_repo_combines_regex_and_entropy_findings() -> None:
     assert {finding.file_path for finding in findings} == {"config/settings.env"}
     assert {finding.repo for finding in findings} == {"example/repo"}
     assert {finding.commit_sha for finding in findings} == {"commit-123"}
-    assert {finding.author_email for finding in findings} == {"author@example.com"}
     assert all("*" in finding.matched_text for finding in findings)
 
 

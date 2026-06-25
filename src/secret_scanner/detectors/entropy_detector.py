@@ -55,7 +55,6 @@ class EntropyDetector:
         repo: str = "",
         file_path: str = "",
         commit_sha: str = "",
-        author_email: str = "",
     ) -> list[Finding]:
         if self._is_excluded_file(file_path):
             return []
@@ -90,7 +89,6 @@ class EntropyDetector:
                         pattern_name="High entropy token",
                         confidence="medium",
                         commit_sha=commit_sha,
-                        author_email=author_email,
                     )
                 )
 
@@ -116,7 +114,6 @@ def scan_content(
     repo: str = "",
     file_path: str = "",
     commit_sha: str = "",
-    author_email: str = "",
     entropy_threshold: float = DEFAULT_ENTROPY_THRESHOLD,
     min_token_length: int = DEFAULT_MIN_TOKEN_LENGTH,
 ) -> list[Finding]:
@@ -129,7 +126,6 @@ def scan_content(
         repo=repo,
         file_path=file_path,
         commit_sha=commit_sha,
-        author_email=author_email,
     )
 
 
