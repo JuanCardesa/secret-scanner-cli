@@ -56,6 +56,13 @@ class GitTree:
     truncated: bool
 
 
+@dataclass(frozen=True)
+class CommitFile:
+    filename: str
+    status: str
+    patch: str | None
+
+
 def redact_secret(value: str) -> str:
     """Redact the middle 60% of a secret-like value."""
     if not value:

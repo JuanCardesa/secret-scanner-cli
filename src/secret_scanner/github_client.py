@@ -16,7 +16,7 @@ from urllib.parse import quote
 
 import httpx
 
-from secret_scanner.models import GitHubRepo, GitTree, GitTreeItem
+from secret_scanner.models import CommitFile, GitHubRepo, GitTree, GitTreeItem
 
 GITHUB_API_BASE_URL = "https://api.github.com"
 GITHUB_API_VERSION = "2022-11-28"
@@ -188,11 +188,69 @@ class GitHubClient:
         except (binascii.Error, UnicodeDecodeError):
             return None
 
+    async def list_commit_shas(
+        self,
+        owner: str,
+        repo: str,
+        branch: str,
+        *,
+        max_count: int,
+    ) -> list[str]:
+        if max_count < 1:
+            raise ValueError("max_count must be >= 1")
+
+        payload = await self._get_paginated(
+            f"/repos/{_url_part(owner)}/{_url_part(repo)}/commits",
+            params={
+                "sha": branch,
+                "per_page": min(DEFAULT_PER_PAGE, max_count),
+            },
+            max_items=max_count,
+        )
+        return [str(item["sha"]) for item in payload]
+
+    async def get_commit_files(
+        self,
+        owner: str,
+        repo: str,
+        sha: str,
+    ) -> list[CommitFile]:
+        response = await self._request(
+            "GET",
+            f"/repos/{_url_part(owner)}/{_url_part(repo)}/commits/{_url_part(sha)}",
+        )
+        payload = _json_object(response)
+
+        raw_files = payload.get("files", [])
+        if not isinstance(raw_files, list):
+            raise GitHubClientError(
+                "GitHub commit response did not include a valid files list",
+                status_code=response.status_code,
+                endpoint=str(response.request.url),
+            )
+
+        files: list[CommitFile] = []
+        for item in raw_files:
+            if not isinstance(item, dict):
+                continue
+
+            patch = item.get("patch")
+            files.append(
+                CommitFile(
+                    filename=str(item["filename"]),
+                    status=str(item.get("status", "")),
+                    patch=patch if isinstance(patch, str) else None,
+                )
+            )
+
+        return files
+
     async def _get_paginated(
         self,
         path: str,
         *,
         params: dict[str, Any] | None = None,
+        max_items: int | None = None,
     ) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
         next_url: str | None = path
@@ -209,6 +267,9 @@ class GitHubClient:
                 )
 
             results.extend(item for item in payload if isinstance(item, dict))
+            if max_items is not None and len(results) >= max_items:
+                return results[:max_items]
+
             next_url = _next_link(response.headers.get("Link"))
             next_params = None
 

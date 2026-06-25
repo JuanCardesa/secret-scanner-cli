@@ -57,6 +57,8 @@ secret-scanner scan repo owner/repo --exclude "*.min.js,package-lock.json"
 secret-scanner scan repo owner/repo --severity high
 secret-scanner scan repo owner/repo --output json --output-file reports/report.json
 secret-scanner scan repo owner/repo --output html --output-file reports/report.html
+secret-scanner scan repo owner/repo --include-history
+secret-scanner scan repo owner/repo --include-history --max-commits 200
 secret-scanner scan org organization-name
 secret-scanner scan org organization-name --branch release
 secret-scanner scan org organization-name --severity high --output json
@@ -69,6 +71,13 @@ For organization scans, each repository uses its GitHub `default_branch` unless
 `--branch` is provided. If one repository fails, the scanner records the failure,
 continues with the remaining repositories, prints a warning to stderr, and exits
 with status code `2` to signal a partial scan.
+
+By default, `scan repo` only inspects the current tree at the target branch's
+latest commit, so a secret that was committed and later removed will not be
+found. Pass `--include-history` to additionally scan the lines added by the
+most recent commits (50 by default, configurable with `--max-commits`) on
+that branch, so secrets that only ever existed in history are still caught.
+This is not yet available for `scan org`.
 
 ## Example Results
 

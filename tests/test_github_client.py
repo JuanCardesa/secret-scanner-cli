@@ -130,6 +130,84 @@ async def test_list_org_repos_follows_link_pagination() -> None:
     assert requested_urls[1].endswith("page=2")
 
 
+async def test_list_commit_shas_stops_once_max_count_reached() -> None:
+    requested_urls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested_urls.append(str(request.url))
+        if "page=2" in str(request.url):
+            return json_response(
+                request,
+                200,
+                [{"sha": "sha-3"}, {"sha": "sha-4"}],
+                headers={
+                    "Link": (
+                        "<https://api.github.com/repos/owner/repo/commits"
+                        '?sha=main&per_page=3&page=3>; rel="next"'
+                    )
+                },
+            )
+
+        return json_response(
+            request,
+            200,
+            [{"sha": "sha-1"}, {"sha": "sha-2"}],
+            headers={
+                "Link": (
+                    "<https://api.github.com/repos/owner/repo/commits"
+                    '?sha=main&per_page=3&page=2>; rel="next"'
+                )
+            },
+        )
+
+    async with GitHubClient(transport=httpx.MockTransport(handler)) as client:
+        shas = await client.list_commit_shas("owner", "repo", "main", max_count=3)
+
+    assert shas == ["sha-1", "sha-2", "sha-3"]
+    assert len(requested_urls) == 2
+
+
+async def test_list_commit_shas_rejects_non_positive_max_count() -> None:
+    async with GitHubClient(
+        transport=httpx.MockTransport(lambda r: json_response(r, 200, []))
+    ) as client:
+        with pytest.raises(ValueError, match="max_count must be >= 1"):
+            await client.list_commit_shas("owner", "repo", "main", max_count=0)
+
+
+async def test_get_commit_files_parses_filename_status_and_patch() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return json_response(
+            request,
+            200,
+            {
+                "sha": "commit-sha",
+                "files": [
+                    {
+                        "filename": "config/settings.env",
+                        "status": "modified",
+                        "patch": "@@ -1,1 +1,2 @@\n+AWS_KEY=AKIA0000000000000000\n",
+                    },
+                    {
+                        "filename": "assets/logo.png",
+                        "status": "modified",
+                    },
+                ],
+            },
+        )
+
+    async with GitHubClient(transport=httpx.MockTransport(handler)) as client:
+        files = await client.get_commit_files("owner", "repo", "commit-sha")
+
+    assert [file.filename for file in files] == [
+        "config/settings.env",
+        "assets/logo.png",
+    ]
+    assert files[0].status == "modified"
+    assert files[0].patch == "@@ -1,1 +1,2 @@\n+AWS_KEY=AKIA0000000000000000\n"
+    assert files[1].patch is None
+
+
 async def test_rate_limit_response_backs_off_and_retries() -> None:
     calls = 0
     sleep_delays: list[float] = []
