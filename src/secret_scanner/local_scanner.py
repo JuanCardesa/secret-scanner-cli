@@ -30,8 +30,11 @@ ALWAYS_EXCLUDED_DIRS = frozenset(
         ".mypy_cache",
         ".pytest_cache",
         ".ruff_cache",
+        "build",
+        "dist",
     }
 )
+ALWAYS_EXCLUDED_DIR_SUFFIXES = (".egg-info",)
 
 
 class LocalScanError(RuntimeError):
@@ -107,10 +110,14 @@ class LocalScanner:
                 continue
 
             relative_parts = file_path.relative_to(root_path).parts
-            if any(part in ALWAYS_EXCLUDED_DIRS for part in relative_parts[:-1]):
+            if any(_is_always_excluded_dir(part) for part in relative_parts[:-1]):
                 continue
 
             yield file_path, file_path.relative_to(root_path).as_posix()
+
+
+def _is_always_excluded_dir(name: str) -> bool:
+    return name in ALWAYS_EXCLUDED_DIRS or name.endswith(ALWAYS_EXCLUDED_DIR_SUFFIXES)
 
 
 def _read_text(path: Path) -> str | None:

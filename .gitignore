@@ -30,6 +30,7 @@ reports/
 !docs/demo/reports/
 !docs/demo/reports/example-report.json
 !docs/demo/reports/example-report.html
+!.secretscanner-baseline.json
 docs/demo/.generated/
 
 .DS_Store
