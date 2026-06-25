@@ -1,0 +1,124 @@
+name: "Secret Scanner CLI"
+description: >-
+  Scan a GitHub repository, organization, or local checkout for exposed
+  secrets and upload the results to GitHub code scanning as SARIF.
+author: "JuanCardesa"
+
+branding:
+  icon: "shield"
+  color: "red"
+
+inputs:
+  target-type:
+    description: "What to scan: 'local', 'repo', or 'org'."
+    required: false
+    default: "local"
+  target:
+    description: >-
+      Path to scan for 'local', 'owner/repo' for 'repo', or organization
+      name for 'org'.
+    required: false
+    default: "."
+  branch:
+    description: "Branch to scan. Only used when target-type is 'repo' or 'org'."
+    required: false
+    default: ""
+  exclude:
+    description: 'Comma-separated exclude glob patterns, e.g. "*.min.js,dist/*".'
+    required: false
+    default: ""
+  severity:
+    description: "Minimum confidence level to report: low, medium, or high."
+    required: false
+    default: ""
+  include-history:
+    description: >-
+      Also scan recent commit diffs. Only used when target-type is 'repo'
+      or 'org'.
+    required: false
+    default: "false"
+  max-commits:
+    description: "Number of commits to scan when include-history is true."
+    required: false
+    default: ""
+  baseline:
+    description: "Path to a baseline file of previously accepted findings."
+    required: false
+    default: ""
+  fail-on-findings:
+    description: "Fail the job if any findings remain after filtering."
+    required: false
+    default: "true"
+  github-token:
+    description: >-
+      GitHub token used for 'repo' or 'org' scans. Not required for
+      target-type 'local'.
+    required: false
+    default: ""
+  sarif-path:
+    description: "Path to write the SARIF report to."
+    required: false
+    default: "secret-scanner-results.sarif"
+
+outputs:
+  sarif-path:
+    description: "Path to the generated SARIF report."
+    value: ${{ inputs.sarif-path }}
+  exit-code:
+    description: "Exit code returned by the secret-scanner CLI."
+    value: ${{ steps.scan.outputs.exit-code }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+      with:
+        python-version: "3.12"
+
+    - name: Install secret-scanner-cli
+      shell: bash
+      run: python -m pip install "${{ github.action_path }}"
+
+    - name: Run secret-scanner
+      id: scan
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: |
+        set +e
+        args=(scan "${{ inputs.target-type }}" "${{ inputs.target }}")
+        args+=(--output sarif --output-file "${{ inputs.sarif-path }}")
+        args+=(--fail-on-findings)
+        [ -n "${{ inputs.branch }}" ] && args+=(--branch "${{ inputs.branch }}")
+        [ -n "${{ inputs.exclude }}" ] && args+=(--exclude "${{ inputs.exclude }}")
+        [ -n "${{ inputs.severity }}" ] && args+=(--severity "${{ inputs.severity }}")
+        [ -n "${{ inputs.baseline }}" ] && args+=(--baseline "${{ inputs.baseline }}")
+        [ "${{ inputs.include-history }}" = "true" ] && args+=(--include-history)
+        [ -n "${{ inputs.max-commits }}" ] && args+=(--max-commits "${{ inputs.max-commits }}")
+        secret-scanner "${args[@]}"
+        echo "exit-code=$?" >> "$GITHUB_OUTPUT"
+        set -e
+
+    - name: Upload SARIF
+      if: always()
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ inputs.sarif-path }}
+
+    - name: Evaluate scan result
+      shell: bash
+      run: |
+        code="${{ steps.scan.outputs.exit-code }}"
+        if [ "$code" = "0" ]; then
+          echo "secret-scanner: no findings."
+        elif [ "$code" = "3" ]; then
+          if [ "${{ inputs.fail-on-findings }}" = "true" ]; then
+            echo "secret-scanner found findings. See the Security tab for details."
+            exit 1
+          fi
+          echo "secret-scanner found findings, but fail-on-findings is false."
+        else
+          echo "secret-scanner exited with code $code. See the run logs above."
+          exit 1
+        fi

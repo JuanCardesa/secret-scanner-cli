@@ -210,13 +210,54 @@ Copy `.env.example` to `.env` for local development and keep `.env` out of Git.
 Use a token that belongs to you and only scan repositories or organizations you
 are authorized to audit.
 
+## CI/CD integration
+
+This repository is itself a reusable composite GitHub Action
+([action.yml](action.yml)) that installs the CLI and runs it for you. It
+scans, writes a SARIF report, uploads it to GitHub code scanning, and fails
+the job if findings remain (configurable):
+
+```yaml
+permissions:
+  contents: read
+  security-events: write # required for the SARIF upload
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: JuanCardesa/secret-scanner-cli@develop
+        with:
+          target-type: repo # 'local', 'repo', or 'org'
+          target: owner/repo
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          fail-on-findings: "true"
+```
+
+For `target-type: local`, no `github-token` is needed. See
+[action.yml](action.yml) for every input (`branch`, `exclude`, `severity`,
+`include-history`, `max-commits`, `baseline`, `sarif-path`).
+
+[.github/workflows/secret-scan.yml](.github/workflows/secret-scan.yml) wires
+this action up against this repository's own checkout on every push and
+pull request, using `--baseline .secretscanner-baseline.json` to accept the
+synthetic secret-shaped values that the test suite intentionally contains.
+If you add a new fixture that looks like a real credential, regenerate that
+baseline locally before pushing:
+
+```bash
+secret-scanner scan local . --write-baseline .secretscanner-baseline.json
+```
+
 ## Project Layout
 
 ```text
 secret-scanner-cli/
 |-- .github/
 |   `-- workflows/
-|       `-- ci.yml
+|       |-- ci.yml
+|       `-- secret-scan.yml
 |-- docs/
 |   |-- assets/
 |   |   |-- secret-scanner-cli-logo-dark.png
@@ -236,6 +277,8 @@ secret-scanner-cli/
 |       `-- patterns.yaml
 |-- tests/
 |-- .env.example
+|-- .secretscanner-baseline.json
+|-- action.yml
 |-- CONTRIBUTING.md
 |-- LEGAL.md
 |-- LICENSE
@@ -277,10 +320,10 @@ See [CHANGELOG.md](CHANGELOG.md) for release notes.
   `--write-baseline` (see [Usage](#usage)) work per invocation; there is no
   shared, versioned baseline store for a team, and a baseline file is only
   as trustworthy as the review behind the scan that produced it.
-- **No packaged CI/CD integration yet.** SARIF output and `--fail-on-findings`
-  give CI systems what they need to gate a build, but there is still no
-  reusable GitHub Action; wiring this into a pull request check today means
-  scripting the CLI install and invocation yourself.
+- **The GitHub Action installs from source on every run.** `action.yml`
+  runs `pip install` against the checked-out action code instead of a
+  published package, so every job pays that install cost; there is no
+  PyPI release to install from instead.
 - **Regex coverage is broad but not exhaustive.** `patterns.yaml` covers the
   most common providers (see [Features](#features)) but, unlike dedicated
   projects such as `gitleaks` or `trufflehog`, it has not been validated
@@ -290,7 +333,8 @@ See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 - Publish the `v0.1.0` release.
 - Add release automation for future versions.
-- Add a reusable GitHub Action wrapping the CLI for CI integration.
+- Publish to PyPI so the GitHub Action (and everyone else) can install a
+  released version instead of building from source on every run.
 
 ## Legal
 
