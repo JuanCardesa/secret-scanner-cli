@@ -52,7 +52,7 @@ def test_scan_path_honors_exclude_patterns(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     "excluded_dir",
-    ["git", "node_modules", "venv", "__pycache__"],
+    ["git", "node_modules", "venv", "__pycache__", "build", "dist"],
 )
 def test_scan_path_always_skips_known_noise_directories(
     tmp_path: Path,
@@ -63,6 +63,20 @@ def test_scan_path_always_skips_known_noise_directories(
     noisy_dir.mkdir()
     (noisy_dir / "secret.env").write_text(
         "AWS_ACCESS_KEY_ID=AKIA4444444444444444\n", encoding="utf-8"
+    )
+
+    scanner = LocalScanner()
+
+    findings = scanner.scan_path(tmp_path)
+
+    assert findings == []
+
+
+def test_scan_path_skips_egg_info_directories(tmp_path: Path) -> None:
+    egg_info_dir = tmp_path / "secret_scanner_cli.egg-info"
+    egg_info_dir.mkdir()
+    (egg_info_dir / "secret.env").write_text(
+        "AWS_ACCESS_KEY_ID=AKIA8888888888888888\n", encoding="utf-8"
     )
 
     scanner = LocalScanner()
