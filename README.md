@@ -24,6 +24,22 @@ regex pattern matching and Shannon entropy analysis.
 > reports, JSON reports, HTML reports, and tested `scan repo` / `scan org`
 > commands.
 
+## Why this matters
+
+Committing a secret to Git does not just expose it at `HEAD`: once it lands
+in a commit, it stays reachable from that repository's history even after
+the line is deleted in a later commit, unless the history itself is rewritten
+and force-pushed. Public GitHub repositories are scraped continuously by
+automated bots looking for exactly this pattern, and credential leaks
+committed to source control have repeatedly led to real breaches at
+companies of every size, not just hobby projects.
+
+This is why `scan repo --include-history` walks commit diffs instead of only
+the current tree (see [Usage](#usage)): a secret that was added in commit 3
+and deleted in commit 7 is invisible to a scanner that only checks the
+latest tree, but it is still sitting in the repository's history for anyone
+to clone and inspect.
+
 ## Features
 
 - Regex-based detection from external `patterns.yaml` definitions.
@@ -192,10 +208,42 @@ components and security boundaries.
 
 See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
+## Limitations
+
+- **No local or pre-commit scanning.** The scanner only talks to the GitHub
+  REST API; it cannot check a working tree or a diff before you push.
+- **`scan org --include-history` does not exist yet.** History scanning is
+  only wired into `scan repo`; running it against every repository in a
+  large organization would multiply API calls and is left for a future
+  release.
+- **Very large trees and commits are not paginated.** GitHub truncates a
+  recursive tree listing past a repository-size threshold, and a single
+  commit's file list past roughly 300 changed files; the scanner currently
+  refuses to scan a truncated tree rather than silently returning partial
+  results, and does not yet paginate oversized commit file lists.
+- **No live credential verification.** Unlike some scanners, this tool never
+  attempts to use a detected key against the provider it belongs to. That is
+  a deliberate choice to avoid making unauthorized requests with someone
+  else's credentials, at the cost of being unable to confirm a key is still
+  active.
+- **No baseline or allowlist mechanism.** Every scan reports every match
+  again; there is no way yet to mark a finding as an accepted risk or known
+  false positive so it stops appearing in subsequent scans.
+- **No CI/CD integration.** There is no reusable GitHub Action and no SARIF
+  output, so wiring this into a pull request check currently means scripting
+  the CLI directly.
+- **Regex coverage is broad but not exhaustive.** `patterns.yaml` covers the
+  most common providers (see [Features](#features)) but, unlike dedicated
+  projects such as `gitleaks` or `trufflehog`, it has not been validated
+  against a catalog the size of `mazen160/secrets-patterns-db`.
+
 ## Roadmap
 
 - Publish the `v0.1.0` release.
 - Add release automation for future versions.
+- Wire `--include-history` into `scan org`.
+- Add a baseline/allowlist mechanism for accepted findings.
+- Add a reusable GitHub Action and SARIF output for CI integration.
 
 ## Legal
 
