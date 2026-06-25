@@ -196,9 +196,8 @@ async def test_successful_zero_remaining_response_delays_next_request() -> None:
     assert sleep_delays == [5.0]
 
 
-async def test_concurrent_requests_share_rate_limit_state_safely() -> None:
+async def test_unrelated_requests_run_concurrently() -> None:
     calls = 0
-    sleep_delays: list[float] = []
     first_request_started = asyncio.Event()
     release_first_request = asyncio.Event()
 
@@ -213,6 +212,50 @@ async def test_concurrent_requests_share_rate_limit_state_safely() -> None:
                 request,
                 200,
                 {"commit": {"sha": "sha-1"}},
+                headers={"X-RateLimit-Remaining": "10"},
+            )
+
+        return json_response(
+            request,
+            200,
+            {"commit": {"sha": "sha-2"}},
+            headers={"X-RateLimit-Remaining": "10"},
+        )
+
+    async with GitHubClient(
+        transport=httpx.MockTransport(handler),
+        clock=lambda: 100.0,
+    ) as client:
+        first_task = asyncio.create_task(client.get_branch_sha("owner", "repo", "main"))
+        await first_request_started.wait()
+
+        second_task = asyncio.create_task(
+            client.get_branch_sha("owner", "repo", "develop")
+        )
+        await asyncio.sleep(0)
+        # The second request must reach the transport while the first is still
+        # in flight: requests are not serialized behind a single client-wide lock.
+        assert calls == 2
+
+        release_first_request.set()
+        first_sha, second_sha = await asyncio.gather(first_task, second_task)
+
+    assert [first_sha, second_sha] == ["sha-1", "sha-2"]
+
+
+async def test_concurrent_requests_share_rate_limit_state_safely() -> None:
+    calls = 0
+    sleep_delays: list[float] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+
+        if calls == 1:
+            return json_response(
+                request,
+                200,
+                {"commit": {"sha": "sha-1"}},
                 headers={
                     "X-RateLimit-Remaining": "0",
                     "X-RateLimit-Reset": "105",
@@ -222,7 +265,7 @@ async def test_concurrent_requests_share_rate_limit_state_safely() -> None:
         return json_response(
             request,
             200,
-            {"commit": {"sha": "sha-2"}},
+            {"commit": {"sha": f"sha-{calls}"}},
             headers={"X-RateLimit-Remaining": "10"},
         )
 
@@ -234,20 +277,23 @@ async def test_concurrent_requests_share_rate_limit_state_safely() -> None:
         sleep=fake_sleep,
         clock=lambda: 100.0,
     ) as client:
-        first_task = asyncio.create_task(client.get_branch_sha("owner", "repo", "main"))
-        await first_request_started.wait()
+        # First request observes the rate limit and records it as shared state.
+        first_sha = await client.get_branch_sha("owner", "repo", "main")
 
-        second_task = asyncio.create_task(
-            client.get_branch_sha("owner", "repo", "develop")
+        # Both of these see the shared rate-limited state concurrently and must
+        # each wait out the limit without corrupting `_rate_limited_until` or
+        # double-counting the delay.
+        second_sha, third_sha = await asyncio.gather(
+            client.get_branch_sha("owner", "repo", "develop"),
+            client.get_branch_sha("owner", "repo", "release"),
         )
-        await asyncio.sleep(0)
-        assert calls == 1
 
-        release_first_request.set()
-        first_sha, second_sha = await asyncio.gather(first_task, second_task)
-
-    assert [first_sha, second_sha] == ["sha-1", "sha-2"]
-    assert sleep_delays == [5.0]
+    assert first_sha == "sha-1"
+    assert {second_sha, third_sha} == {"sha-2", "sha-3"}
+    # Exactly how many coroutines observe the limit before it is cleared depends
+    # on scheduling, but every observed delay must reflect the real reset time.
+    assert sleep_delays
+    assert all(delay == 5.0 for delay in sleep_delays)
 
 
 async def test_negative_max_retries_is_rejected() -> None:
