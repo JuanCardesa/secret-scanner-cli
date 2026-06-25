@@ -4,12 +4,26 @@ from __future__ import annotations
 
 import html
 import json
+import re
 from dataclasses import asdict
 from typing import Literal
 
+from secret_scanner.baseline import finding_fingerprint
 from secret_scanner.models import Confidence, Finding
 
-OutputFormat = Literal["terminal", "json", "html"]
+OutputFormat = Literal["terminal", "json", "html", "sarif"]
+
+SARIF_SCHEMA_URI = (
+    "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/"
+    "Schemata/sarif-schema-2.1.0.json"
+)
+SARIF_INFORMATION_URI = "https://github.com/JuanCardesa/secret-scanner-cli"
+
+SARIF_LEVELS: dict[Confidence, str] = {
+    "high": "error",
+    "medium": "warning",
+    "low": "note",
+}
 
 CONFIDENCE_ORDER: dict[Confidence, int] = {
     "low": 1,
@@ -52,6 +66,8 @@ def render_report(
         return render_json(findings)
     if output_format == "html":
         return render_html(findings)
+    if output_format == "sarif":
+        return render_sarif(findings)
 
     raise ValueError(f"unsupported output format: {output_format}")
 
@@ -100,6 +116,72 @@ def render_html(findings: list[Finding]) -> str:
   </table>
 </body>
 </html>"""
+
+
+def render_sarif(findings: list[Finding]) -> str:
+    """Render findings as SARIF 2.1.0, for GitHub code scanning ingestion."""
+    rules: dict[str, dict[str, object]] = {}
+    results = [_sarif_result(finding, rules) for finding in findings]
+
+    sarif = {
+        "$schema": SARIF_SCHEMA_URI,
+        "version": "2.1.0",
+        "runs": [
+            {
+                "tool": {
+                    "driver": {
+                        "name": "secret-scanner",
+                        "informationUri": SARIF_INFORMATION_URI,
+                        "rules": [rules[rule_id] for rule_id in sorted(rules)],
+                    }
+                },
+                "results": results,
+            }
+        ],
+    }
+    return json.dumps(sarif, indent=2, sort_keys=True)
+
+
+def _sarif_result(
+    finding: Finding, rules: dict[str, dict[str, object]]
+) -> dict[str, object]:
+    rule_id = _sarif_rule_id(finding)
+    rules.setdefault(
+        rule_id,
+        {
+            "id": rule_id,
+            "name": finding.pattern_name,
+            "shortDescription": {"text": finding.pattern_name},
+            "defaultConfiguration": {"level": SARIF_LEVELS[finding.confidence]},
+        },
+    )
+
+    return {
+        "ruleId": rule_id,
+        "level": SARIF_LEVELS[finding.confidence],
+        "message": {
+            "text": (
+                f"{finding.pattern_name} detected via {finding.detection_method} "
+                f"in {finding.repo}."
+            )
+        },
+        "locations": [
+            {
+                "physicalLocation": {
+                    "artifactLocation": {"uri": finding.file_path},
+                    "region": {"startLine": finding.line_number},
+                }
+            }
+        ],
+        "partialFingerprints": {
+            "secretScannerFingerprint/v1": finding_fingerprint(finding)
+        },
+    }
+
+
+def _sarif_rule_id(finding: Finding) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", finding.pattern_name.lower()).strip("-")
+    return f"{slug}-{finding.detection_method}"
 
 
 def render_terminal(findings: list[Finding], *, use_color: bool = True) -> str:
