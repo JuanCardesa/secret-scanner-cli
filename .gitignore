@@ -3,9 +3,13 @@ __pycache__/
 *$py.class
 
 .pytest_cache/
+.pytest-tmp*/
+pytest-tmp*/
+pytest-cache-files-*/
 .ruff_cache/
 .mypy_cache/
 .coverage
+coverage.xml
 htmlcov/
 
 .venv/
@@ -23,7 +27,11 @@ build/
 reports/
 *.json
 *.html
+!docs/demo/reports/
+!docs/demo/reports/example-report.json
+!docs/demo/reports/example-report.html
+!.secretscanner-baseline.json
+docs/demo/.generated/
 
 .DS_Store
 Thumbs.db
-

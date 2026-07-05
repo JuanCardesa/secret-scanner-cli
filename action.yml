@@ -1,0 +1,139 @@
+name: "Secret Scanner CLI"
+description: >-
+  Scan a GitHub repository, organization, or local checkout for exposed
+  secrets and upload the results to GitHub code scanning as SARIF.
+author: "JuanCardesa"
+
+branding:
+  icon: "shield"
+  color: "red"
+
+inputs:
+  target-type:
+    description: "What to scan: 'local', 'repo', or 'org'."
+    required: false
+    default: "local"
+  target:
+    description: >-
+      Path to scan for 'local', 'owner/repo' for 'repo', or organization
+      name for 'org'.
+    required: false
+    default: "."
+  branch:
+    description: "Branch to scan. Only used when target-type is 'repo' or 'org'."
+    required: false
+    default: ""
+  exclude:
+    description: 'Comma-separated exclude glob patterns, e.g. "*.min.js,dist/*".'
+    required: false
+    default: ""
+  severity:
+    description: "Minimum confidence level to report: low, medium, or high."
+    required: false
+    default: ""
+  include-history:
+    description: >-
+      Also scan recent commit diffs. Only used when target-type is 'repo'
+      or 'org'.
+    required: false
+    default: "false"
+  max-commits:
+    description: "Number of commits to scan when include-history is true."
+    required: false
+    default: ""
+  baseline:
+    description: "Path to a baseline file of previously accepted findings."
+    required: false
+    default: ""
+  fail-on-findings:
+    description: "Fail the job if any findings remain after filtering."
+    required: false
+    default: "true"
+  github-token:
+    description: >-
+      GitHub token used for 'repo' or 'org' scans. Not required for
+      target-type 'local'.
+    required: false
+    default: ""
+  sarif-path:
+    description: "Path to write the SARIF report to."
+    required: false
+    default: "secret-scanner-results.sarif"
+
+outputs:
+  sarif-path:
+    description: "Path to the generated SARIF report."
+    value: ${{ inputs.sarif-path }}
+  exit-code:
+    description: "Exit code returned by the secret-scanner CLI."
+    value: ${{ steps.scan.outputs.exit-code }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+      with:
+        python-version: "3.12"
+
+    - name: Install cardesa-secret-scanner
+      shell: bash
+      run: python -m pip install "${{ github.action_path }}"
+
+    - name: Run secret-scanner
+      id: scan
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        # Inputs are passed through the environment, never interpolated into
+        # the script body, so a malicious value cannot break out into shell
+        # execution on the runner.
+        SS_TARGET_TYPE: ${{ inputs.target-type }}
+        SS_TARGET: ${{ inputs.target }}
+        SS_SARIF_PATH: ${{ inputs.sarif-path }}
+        SS_BRANCH: ${{ inputs.branch }}
+        SS_EXCLUDE: ${{ inputs.exclude }}
+        SS_SEVERITY: ${{ inputs.severity }}
+        SS_BASELINE: ${{ inputs.baseline }}
+        SS_INCLUDE_HISTORY: ${{ inputs.include-history }}
+        SS_MAX_COMMITS: ${{ inputs.max-commits }}
+      run: |
+        set +e
+        args=(scan "$SS_TARGET_TYPE" "$SS_TARGET")
+        args+=(--output sarif --output-file "$SS_SARIF_PATH")
+        args+=(--fail-on-findings)
+        [ -n "$SS_BRANCH" ] && args+=(--branch "$SS_BRANCH")
+        [ -n "$SS_EXCLUDE" ] && args+=(--exclude "$SS_EXCLUDE")
+        [ -n "$SS_SEVERITY" ] && args+=(--severity "$SS_SEVERITY")
+        [ -n "$SS_BASELINE" ] && args+=(--baseline "$SS_BASELINE")
+        [ "$SS_INCLUDE_HISTORY" = "true" ] && args+=(--include-history)
+        [ -n "$SS_MAX_COMMITS" ] && args+=(--max-commits "$SS_MAX_COMMITS")
+        secret-scanner "${args[@]}"
+        echo "exit-code=$?" >> "$GITHUB_OUTPUT"
+        set -e
+
+    - name: Upload SARIF
+      if: always()
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ inputs.sarif-path }}
+
+    - name: Evaluate scan result
+      shell: bash
+      env:
+        SS_EXIT_CODE: ${{ steps.scan.outputs.exit-code }}
+        SS_FAIL_ON_FINDINGS: ${{ inputs.fail-on-findings }}
+      run: |
+        code="$SS_EXIT_CODE"
+        if [ "$code" = "0" ]; then
+          echo "secret-scanner: no findings."
+        elif [ "$code" = "3" ]; then
+          if [ "$SS_FAIL_ON_FINDINGS" = "true" ]; then
+            echo "secret-scanner found findings. See the Security tab for details."
+            exit 1
+          fi
+          echo "secret-scanner found findings, but fail-on-findings is false."
+        else
+          echo "secret-scanner exited with code $code. See the run logs above."
+          exit 1
+        fi

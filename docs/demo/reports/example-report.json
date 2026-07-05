@@ -1,0 +1,48 @@
+{
+  "findings": [
+    {
+      "commit_sha": "demo-local-commit",
+      "confidence": "high",
+      "detection_method": "regex",
+      "entropy_score": 1.0219280948873624,
+      "file_path": "app.env",
+      "line_number": 2,
+      "matched_text": "AKIA************0000",
+      "pattern_name": "AWS access key",
+      "repo": "demo/local-fixture"
+    },
+    {
+      "commit_sha": "demo-local-commit",
+      "confidence": "high",
+      "detection_method": "regex",
+      "entropy_score": 0.6689955935892812,
+      "file_path": "app.env",
+      "line_number": 3,
+      "matched_text": "ghp_AAAA************************AAAAAAAA",
+      "pattern_name": "GitHub personal access token",
+      "repo": "demo/local-fixture"
+    },
+    {
+      "commit_sha": "demo-local-commit",
+      "confidence": "high",
+      "detection_method": "regex",
+      "entropy_score": 1.498778124459133,
+      "file_path": "app.env",
+      "line_number": 4,
+      "matched_text": "sk_liv********************BBBBBB",
+      "pattern_name": "Stripe live API key",
+      "repo": "demo/local-fixture"
+    },
+    {
+      "commit_sha": "demo-local-commit",
+      "confidence": "medium",
+      "detection_method": "entropy",
+      "entropy_score": 4.787782031835939,
+      "file_path": "app.env",
+      "line_number": 5,
+      "matched_text": "UvQXUNYAU******************************5ObQ3DfNB",
+      "pattern_name": "High entropy token",
+      "repo": "demo/local-fixture"
+    }
+  ]
+}

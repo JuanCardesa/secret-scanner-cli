@@ -1,2 +1,1 @@
 """Secret detection engines."""
-

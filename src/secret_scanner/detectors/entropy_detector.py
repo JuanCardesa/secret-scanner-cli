@@ -3,35 +3,41 @@
 from __future__ import annotations
 
 import fnmatch
-import math
 import re
-from collections import Counter
+from collections.abc import Iterable
 from pathlib import PurePosixPath
-from typing import Iterable
 
-from secret_scanner.models import Finding, redact_secret
+from secret_scanner.directives import line_has_ignore_directive
+from secret_scanner.models import Finding, redact_secret, shannon_entropy
 
 TOKEN_RE = re.compile(r"(?<![A-Za-z0-9])[A-Za-z0-9_./+=:-]{21,}(?![A-Za-z0-9])")
+HEX_TOKEN_RE = re.compile(r"^[0-9a-fA-F]+$")
+# The token charset includes '=' and ':', so `HEX_KEY=deadbeef...` matches as a
+# single token; strip a leading `name=` / `name:` so length, entropy, and the
+# hex-vs-base64 threshold all judge the value, not the identifier glued to it.
+ASSIGNMENT_PREFIX_RE = re.compile(r"^[A-Za-z0-9_.-]+[=:](?P<value>.+)$")
+# Base64/base62-class tokens draw from a ~64-symbol alphabet (max entropy 6
+# bits/char), so 4.5 is a sensible noise floor. Hex tokens draw from only 16
+# symbols (max entropy 4.0 bits/char), so the same 4.5 threshold would make
+# every hex secret undetectable; they get a proportionally lower floor.
 DEFAULT_ENTROPY_THRESHOLD = 4.5
+DEFAULT_HEX_ENTROPY_THRESHOLD = 3.0
 DEFAULT_MIN_TOKEN_LENGTH = 21
 DEFAULT_EXCLUDED_PATHS = (
     "package-lock.json",
     "npm-shrinkwrap.json",
     "yarn.lock",
     "pnpm-lock.yaml",
+    "poetry.lock",
+    "Pipfile.lock",
+    "Gemfile.lock",
+    "Cargo.lock",
+    "composer.lock",
+    "go.sum",
     "*.min.js",
     "*.map",
 )
 IMAGE_EXTENSIONS = {".gif", ".jpg", ".jpeg", ".png", ".webp", ".ico", ".svg"}
-
-
-def shannon_entropy(value: str) -> float:
-    if not value:
-        return 0.0
-
-    counts = Counter(value)
-    length = len(value)
-    return -sum((count / length) * math.log2(count / length) for count in counts.values())
 
 
 class EntropyDetector:
@@ -39,10 +45,12 @@ class EntropyDetector:
         self,
         *,
         entropy_threshold: float = DEFAULT_ENTROPY_THRESHOLD,
+        hex_entropy_threshold: float = DEFAULT_HEX_ENTROPY_THRESHOLD,
         min_token_length: int = DEFAULT_MIN_TOKEN_LENGTH,
         excluded_paths: Iterable[str] = DEFAULT_EXCLUDED_PATHS,
     ) -> None:
         self.entropy_threshold = entropy_threshold
+        self.hex_entropy_threshold = hex_entropy_threshold
         self.min_token_length = min_token_length
         self.excluded_paths = tuple(excluded_paths)
 
@@ -53,7 +61,6 @@ class EntropyDetector:
         repo: str = "",
         file_path: str = "",
         commit_sha: str = "",
-        author_email: str = "",
     ) -> list[Finding]:
         if self._is_excluded_file(file_path):
             return []
@@ -62,18 +69,24 @@ class EntropyDetector:
         seen: set[tuple[int, str]] = set()
 
         for line_number, line in enumerate(content.splitlines(), start=1):
-            if _is_false_positive_line(line):
+            if _is_false_positive_line(line) or line_has_ignore_directive(line):
                 continue
 
             for match in TOKEN_RE.finditer(line):
-                token = match.group(0).strip(".,;\"'`)]}>")
-                if len(token) < self.min_token_length:
+                raw = match.group(0).strip(".,;\"'`)]}>")
+                candidate = self._secret_candidate(raw)
+                if len(candidate) < self.min_token_length:
                     continue
 
-                if shannon_entropy(token) <= self.entropy_threshold:
+                # Score entropy on the same string used to pick the threshold,
+                # so a low-entropy identifier glued to a short value (e.g.
+                # `max_file_size_bytes=4`) can't be scored as one thing and
+                # classified as another.
+                candidate_entropy = shannon_entropy(candidate)
+                if candidate_entropy <= self._threshold_for(candidate):
                     continue
 
-                fingerprint = (line_number, token)
+                fingerprint = (line_number, candidate)
                 if fingerprint in seen:
                     continue
 
@@ -83,16 +96,35 @@ class EntropyDetector:
                         repo=repo,
                         file_path=file_path,
                         line_number=line_number,
-                        matched_text=redact_secret(token),
+                        matched_text=redact_secret(candidate),
                         detection_method="entropy",
                         pattern_name="High entropy token",
                         confidence="medium",
                         commit_sha=commit_sha,
-                        author_email=author_email,
+                        entropy_score=candidate_entropy,
                     )
                 )
 
         return findings
+
+    def _secret_candidate(self, token: str) -> str:
+        """Narrow `name=value` / `name:value` to the value when it stands alone.
+
+        Only strips the identifier when the value is itself long enough to be a
+        token; otherwise the whole match is kept, which avoids splitting a
+        base64 value at its own `=` padding.
+        """
+        prefix_match = ASSIGNMENT_PREFIX_RE.match(token)
+        if prefix_match is not None:
+            value = prefix_match.group("value")
+            if len(value) >= self.min_token_length:
+                return value
+        return token
+
+    def _threshold_for(self, token: str) -> float:
+        if HEX_TOKEN_RE.match(token):
+            return self.hex_entropy_threshold
+        return self.entropy_threshold
 
     def _is_excluded_file(self, file_path: str) -> bool:
         normalized = file_path.replace("\\", "/")
@@ -114,12 +146,13 @@ def scan_content(
     repo: str = "",
     file_path: str = "",
     commit_sha: str = "",
-    author_email: str = "",
     entropy_threshold: float = DEFAULT_ENTROPY_THRESHOLD,
+    hex_entropy_threshold: float = DEFAULT_HEX_ENTROPY_THRESHOLD,
     min_token_length: int = DEFAULT_MIN_TOKEN_LENGTH,
 ) -> list[Finding]:
     detector = EntropyDetector(
         entropy_threshold=entropy_threshold,
+        hex_entropy_threshold=hex_entropy_threshold,
         min_token_length=min_token_length,
     )
     return detector.scan(
@@ -127,7 +160,6 @@ def scan_content(
         repo=repo,
         file_path=file_path,
         commit_sha=commit_sha,
-        author_email=author_email,
     )
 
 
@@ -140,4 +172,3 @@ def _is_false_positive_line(line: str) -> bool:
         return True
 
     return False
-

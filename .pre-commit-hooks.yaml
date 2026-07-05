@@ -1,0 +1,7 @@
+- id: secret-scanner
+  name: Secret Scanner CLI
+  description: Scan the working tree for exposed secrets before committing.
+  entry: secret-scanner scan local .
+  language: python
+  pass_filenames: false
+  require_serial: true
