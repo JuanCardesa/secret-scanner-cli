@@ -15,7 +15,11 @@ from secret_scanner.baseline import (
     load_baseline,
     write_baseline,
 )
-from secret_scanner.detectors.entropy_detector import EntropyDetector
+from secret_scanner.detectors.entropy_detector import (
+    DEFAULT_ENTROPY_THRESHOLD,
+    DEFAULT_HEX_ENTROPY_THRESHOLD,
+    EntropyDetector,
+)
 from secret_scanner.github_client import GitHubClient, GitHubClientError
 from secret_scanner.local_scanner import LocalScanError, LocalScanner
 from secret_scanner.models import Confidence, Finding
@@ -293,7 +297,15 @@ def _detector_kwargs(args: argparse.Namespace) -> dict[str, Any]:
     if threshold <= 0:
         raise ValueError("--entropy-threshold must be greater than 0")
 
-    return {"entropy_detector": EntropyDetector(entropy_threshold=threshold)}
+    hex_threshold = threshold * (
+        DEFAULT_HEX_ENTROPY_THRESHOLD / DEFAULT_ENTROPY_THRESHOLD
+    )
+    return {
+        "entropy_detector": EntropyDetector(
+            entropy_threshold=threshold,
+            hex_entropy_threshold=hex_threshold,
+        )
+    }
 
 
 def _apply_baseline(

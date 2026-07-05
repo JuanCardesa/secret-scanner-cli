@@ -78,6 +78,13 @@ def test_render_html_escapes_finding_values() -> None:
     assert "<script>alert" not in output
 
 
+def test_render_html_empty_findings_spans_all_columns() -> None:
+    output = render_html([])
+
+    assert 'colspan="9"' in output
+    assert "No findings detected." in output
+
+
 def test_render_sarif_produces_valid_structure_with_fingerprint() -> None:
     report = json.loads(render_sarif([finding()]))
 

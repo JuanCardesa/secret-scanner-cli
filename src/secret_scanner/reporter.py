@@ -80,7 +80,7 @@ def render_json(findings: list[Finding]) -> str:
 def render_html(findings: list[Finding]) -> str:
     rows = "\n".join(_html_row(finding) for finding in findings)
     if not rows:
-        rows = '<tr><td colspan="8">No findings detected.</td></tr>'
+        rows = '<tr><td colspan="9">No findings detected.</td></tr>'
 
     return f"""<!doctype html>
 <html lang="en">

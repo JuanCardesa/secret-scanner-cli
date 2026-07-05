@@ -852,6 +852,38 @@ def test_entropy_threshold_flag_lowers_the_detection_floor(
     assert [f["detection_method"] for f in lowered_report["findings"]] == ["entropy"]
 
 
+def test_entropy_threshold_flag_scales_hex_threshold(
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    # Hex-only values use a lower entropy ceiling than base64-class tokens. This
+    # token sits below the default hex floor (3.0), but above the threshold that
+    # should be derived from --entropy-threshold 4.0.
+    token = "aaaabbbbccccddddeeeeffff1111"
+    (tmp_path / "config.txt").write_text(f"value = {token}\n", encoding="utf-8")
+
+    default_exit = cli.main(["scan", "local", str(tmp_path), "--output", "json"])
+    default_report = json.loads(capsys.readouterr().out)
+
+    lowered_exit = cli.main(
+        [
+            "scan",
+            "local",
+            str(tmp_path),
+            "--entropy-threshold",
+            "4.0",
+            "--output",
+            "json",
+        ]
+    )
+    lowered_report = json.loads(capsys.readouterr().out)
+
+    assert default_exit == 0
+    assert default_report["findings"] == []
+    assert lowered_exit == 0
+    assert [f["detection_method"] for f in lowered_report["findings"]] == ["entropy"]
+
+
 def test_entropy_threshold_flag_rejects_non_positive_values(
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
