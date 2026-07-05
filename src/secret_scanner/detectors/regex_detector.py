@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-import json
 import re
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 
-from secret_scanner.models import Finding, SecretPattern, redact_secret
+import yaml
+
+from secret_scanner.directives import line_has_ignore_directive
+from secret_scanner.models import Finding, SecretPattern, redact_secret, shannon_entropy
 
 DEFAULT_PATTERNS_PATH = Path(__file__).resolve().parents[1] / "patterns.yaml"
 VALID_CONFIDENCE = {"high", "medium", "low"}
@@ -20,20 +22,10 @@ class PatternLoadError(ValueError):
 def load_patterns(
     patterns_path: str | Path = DEFAULT_PATTERNS_PATH,
 ) -> list[SecretPattern]:
-    """Load regex patterns from an external YAML file.
-
-    Phase 1 keeps this dependency-light by accepting JSON-compatible YAML.
-    If PyYAML is installed later, standard YAML files are also supported.
-    """
+    """Load regex patterns from an external YAML file."""
     path = Path(patterns_path)
     raw = path.read_text(encoding="utf-8")
-
-    try:
-        import yaml  # type: ignore[import-not-found,import-untyped]
-
-        parsed = yaml.safe_load(raw)
-    except ModuleNotFoundError:
-        parsed = json.loads(raw)
+    parsed = yaml.safe_load(raw)
 
     entries = parsed.get("patterns") if isinstance(parsed, dict) else parsed
     if not isinstance(entries, list):
@@ -96,6 +88,7 @@ class RegexDetector:
     ) -> list[Finding]:
         findings: list[Finding] = []
         seen: set[tuple[str, int, str]] = set()
+        lines = content.splitlines()
 
         for pattern, compiled in self._compiled:
             for match in compiled.finditer(content):
@@ -104,6 +97,9 @@ class RegexDetector:
                     continue
 
                 line_number = content.count("\n", 0, match.start()) + 1
+                if _line_has_ignore(lines, line_number):
+                    continue
+
                 fingerprint = (pattern.name, line_number, matched_value)
                 if fingerprint in seen:
                     continue
@@ -119,6 +115,7 @@ class RegexDetector:
                         pattern_name=pattern.name,
                         confidence=pattern.confidence,
                         commit_sha=commit_sha,
+                        entropy_score=shannon_entropy(matched_value),
                     )
                 )
 
@@ -146,3 +143,10 @@ def _selected_match_value(match: re.Match[str]) -> str:
     if "secret" in match.re.groupindex:
         return match.group("secret")
     return match.group(0)
+
+
+def _line_has_ignore(lines: list[str], line_number: int) -> bool:
+    index = line_number - 1
+    if 0 <= index < len(lines):
+        return line_has_ignore_directive(lines[index])
+    return False

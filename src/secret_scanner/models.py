@@ -2,11 +2,25 @@
 
 from __future__ import annotations
 
+import math
+from collections import Counter
 from dataclasses import dataclass
 from typing import Literal
 
 Confidence = Literal["high", "medium", "low"]
 DetectionMethod = Literal["regex", "entropy"]
+
+
+def shannon_entropy(value: str) -> float:
+    """Return the Shannon entropy (bits per character) of a string."""
+    if not value:
+        return 0.0
+
+    counts = Counter(value)
+    length = len(value)
+    return -sum(
+        (count / length) * math.log2(count / length) for count in counts.values()
+    )
 
 
 @dataclass(frozen=True)
@@ -27,6 +41,7 @@ class Finding:
     pattern_name: str
     confidence: Confidence
     commit_sha: str
+    entropy_score: float = 0.0
 
 
 @dataclass(frozen=True)

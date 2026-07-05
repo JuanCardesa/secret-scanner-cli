@@ -37,16 +37,22 @@ def test_regex_detector_loads_patterns_from_external_file() -> None:
 
     assert {pattern.name for pattern in patterns} == {
         "AWS access key",
+        "AWS secret access key",
         "GitHub personal access token",
+        "GitLab personal access token",
         "Stripe live API key",
         "PEM private key",
         "Generic JWT",
+        "Anthropic API key",
+        "OpenAI API key",
+        "Hugging Face token",
         "SendGrid API key",
         "Google API key",
         "Slack token",
         "Slack webhook URL",
         "npm access token",
         "PyPI upload token",
+        "DigitalOcean token",
         "Twilio API key",
         "Mailgun API key",
         "Azure storage account key",
@@ -164,6 +170,30 @@ def test_regex_detector_detects_private_key_from_test_keys_fixture_style() -> No
             "square = sq0atp-" + ("R" * 22),
             "Square access token",
         ),
+        (
+            "aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            "AWS secret access key",
+        ),
+        (
+            "gitlab = glpat-" + ("S" * 20),
+            "GitLab personal access token",
+        ),
+        (
+            "anthropic = sk-ant-api03-" + ("t" * 90) + "AA",
+            "Anthropic API key",
+        ),
+        (
+            "openai = sk-" + ("U" * 24) + "T3BlbkFJ" + ("V" * 24),
+            "OpenAI API key",
+        ),
+        (
+            "hf = hf_" + ("w" * 36),
+            "Hugging Face token",
+        ),
+        (
+            "digitalocean = dop_v1_" + ("a" * 64),
+            "DigitalOcean token",
+        ),
     ],
 )
 def test_regex_detector_covers_required_pattern_families(
@@ -176,6 +206,76 @@ def test_regex_detector_covers_required_pattern_families(
 
     assert [finding.pattern_name for finding in findings] == [expected_pattern]
     assert all("*" in finding.matched_text for finding in findings)
+
+
+def test_regex_detector_named_group_reports_only_the_secret() -> None:
+    detector = RegexDetector(load_patterns(PATTERNS_PATH))
+
+    findings = detector.scan(
+        "aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+        file_path="app.env",
+    )
+
+    assert len(findings) == 1
+    # The redacted value covers the credential, not the surrounding context.
+    assert "aws_secret_access_key" not in findings[0].matched_text
+    assert findings[0].matched_text.startswith("wJal")
+
+
+def test_regex_detector_honors_inline_ignore_directive() -> None:
+    detector = RegexDetector(load_patterns(PATTERNS_PATH))
+
+    findings = detector.scan(
+        "aws_key = AKIA0000000000000000  # secret-scanner:ignore",
+        file_path="app.env",
+    )
+
+    assert findings == []
+
+
+def test_entropy_detector_flags_hex_secret_below_base64_threshold() -> None:
+    # A 64-char hex secret peaks at 4.0 bits/char, so the default 4.5 base64
+    # floor can never catch it; the hex-aware floor must.
+    hex_secret = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2"
+
+    findings = EntropyDetector().scan(hex_secret, file_path="config.txt")
+
+    assert len(findings) == 1
+    assert findings[0].detection_method == "entropy"
+    assert findings[0].entropy_score <= 4.0
+
+
+def test_entropy_detector_classifies_hex_value_behind_an_assignment() -> None:
+    # `NAME=<hex>` matches as one token; the leading identifier must not push
+    # the value out of the hex threshold class.
+    hex_secret = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2"
+
+    findings = EntropyDetector().scan(
+        f"SESSION_HMAC={hex_secret}", file_path="config.txt"
+    )
+
+    assert len(findings) == 1
+    assert findings[0].detection_method == "entropy"
+
+
+def test_entropy_detector_ignores_identifier_with_short_value() -> None:
+    # `max_file_size_bytes=4`: the RHS is a single hex digit, so the whole
+    # descriptive token must not be scored as a high-entropy hex secret.
+    findings = EntropyDetector().scan("max_file_size_bytes=4", file_path="scanner.py")
+
+    assert findings == []
+
+
+def test_entropy_detector_honors_inline_ignore_directive() -> None:
+    detector = EntropyDetector()
+    secret = "qR8vN3pLx9ZtY2mK5sD7fG1hJ4aC6bE0wUiOoP"
+
+    findings = detector.scan(
+        f"token = {secret}  # secret-scanner:allow",
+        file_path="config.txt",
+    )
+
+    assert findings == []
 
 
 def test_entropy_detector_flags_high_entropy_test_keys_secret() -> None:
