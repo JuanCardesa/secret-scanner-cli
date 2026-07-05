@@ -423,7 +423,7 @@ def test_scan_repo_with_include_history_merges_findings(
     assert [item["confidence"] for item in report["findings"]] == ["high", "medium"]
     assert {
         "repo_history_full_name": "example/repo",
-        "branch": "main",
+        "branch": None,
         "max_commits": 10,
         "exclude_patterns": (),
     } in FakeRepositoryScanner.calls
@@ -653,13 +653,17 @@ def test_scan_local_write_baseline_then_baseline_filters_findings(
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
 ) -> None:
-    (tmp_path / "app.env").write_text(
+    scan_dir = tmp_path / "repo"
+    scan_dir.mkdir()
+    (scan_dir / "app.env").write_text(
         "AWS_ACCESS_KEY_ID=AKIA0000000000000000\n", encoding="utf-8"
     )
+    # Keep the baseline outside the scanned tree: a baseline file is full of
+    # hex fingerprints that would otherwise be flagged on the next scan.
     baseline_path = tmp_path / "baseline.json"
 
     write_exit_code = cli.main(
-        ["scan", "local", str(tmp_path), "--write-baseline", str(baseline_path)]
+        ["scan", "local", str(scan_dir), "--write-baseline", str(baseline_path)]
     )
     write_captured = capsys.readouterr()
 
@@ -667,7 +671,7 @@ def test_scan_local_write_baseline_then_baseline_filters_findings(
         [
             "scan",
             "local",
-            str(tmp_path),
+            str(scan_dir),
             "--baseline",
             str(baseline_path),
             "--output",
@@ -806,3 +810,53 @@ def test_scan_org_fail_on_findings_returns_three_without_failures() -> None:
     )
 
     assert exit_code == 3
+
+
+def test_version_flag_prints_version(capsys: pytest.CaptureFixture[str]) -> None:
+    from secret_scanner import __version__
+
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main(["--version"])
+
+    assert exit_info.value.code == 0
+    assert __version__ in capsys.readouterr().out
+
+
+def test_entropy_threshold_flag_lowers_the_detection_floor(
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    # A base64-class token whose entropy (~3.58) sits below the 4.5 default.
+    token = "aabbccddeeffgghhiijjkkll"
+    (tmp_path / "config.txt").write_text(f"value = {token}\n", encoding="utf-8")
+
+    default_exit = cli.main(["scan", "local", str(tmp_path), "--output", "json"])
+    default_report = json.loads(capsys.readouterr().out)
+
+    lowered_exit = cli.main(
+        [
+            "scan",
+            "local",
+            str(tmp_path),
+            "--entropy-threshold",
+            "3.0",
+            "--output",
+            "json",
+        ]
+    )
+    lowered_report = json.loads(capsys.readouterr().out)
+
+    assert default_exit == 0
+    assert default_report["findings"] == []
+    assert lowered_exit == 0
+    assert [f["detection_method"] for f in lowered_report["findings"]] == ["entropy"]
+
+
+def test_entropy_threshold_flag_rejects_non_positive_values(
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    exit_code = cli.main(["scan", "local", str(tmp_path), "--entropy-threshold", "0"])
+
+    assert exit_code == 1
+    assert "--entropy-threshold must be greater than 0" in capsys.readouterr().err

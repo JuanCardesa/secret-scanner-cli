@@ -7,13 +7,15 @@ import asyncio
 import sys
 from collections.abc import Sequence
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
+from secret_scanner import __version__
 from secret_scanner.baseline import (
     filter_accepted_findings,
     load_baseline,
     write_baseline,
 )
+from secret_scanner.detectors.entropy_detector import EntropyDetector
 from secret_scanner.github_client import GitHubClient, GitHubClientError
 from secret_scanner.local_scanner import LocalScanError, LocalScanner
 from secret_scanner.models import Confidence, Finding
@@ -29,8 +31,6 @@ from secret_scanner.scanner import (
     RepositoryScanner,
     parse_exclude_patterns,
 )
-
-DEFAULT_BRANCH = "main"
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -52,9 +52,14 @@ def build_parser() -> argparse.ArgumentParser:
         prog="secret-scanner",
         description="Defensive CLI for authorized GitHub secret scanning.",
     )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+    )
     subcommands = parser.add_subparsers(dest="command", required=True)
 
-    scan_parser = subcommands.add_parser("scan", help="Scan GitHub repositories.")
+    scan_parser = subcommands.add_parser("scan", help="Scan for exposed secrets.")
     scan_subcommands = scan_parser.add_subparsers(dest="scan_target", required=True)
 
     repo_parser = scan_subcommands.add_parser(
@@ -64,77 +69,11 @@ def build_parser() -> argparse.ArgumentParser:
     repo_parser.add_argument("repo", help="Repository in owner/repo format.")
     repo_parser.add_argument(
         "--branch",
-        default=DEFAULT_BRANCH,
-        help=f"Branch to scan. Defaults to {DEFAULT_BRANCH}.",
+        default=None,
+        help="Branch to scan. Defaults to the repository's default branch.",
     )
-    repo_parser.add_argument(
-        "--exclude",
-        default="",
-        help='Comma-separated file path or glob patterns, e.g. "*.min.js,dist/*".',
-    )
-    repo_parser.add_argument(
-        "--severity",
-        choices=("low", "medium", "high"),
-        help="Minimum confidence level to include in the report.",
-    )
-    repo_parser.add_argument(
-        "--output",
-        choices=("terminal", "json", "html", "sarif"),
-        default="terminal",
-        help="Report format. Defaults to terminal.",
-    )
-    repo_parser.add_argument(
-        "--output-file",
-        type=Path,
-        help="Write the report to a file instead of stdout.",
-    )
-    repo_parser.add_argument(
-        "--no-color",
-        action="store_true",
-        help="Disable ANSI colors in terminal output.",
-    )
-    repo_parser.add_argument(
-        "--fail-on-findings",
-        action="store_true",
-        help=(
-            "Exit with status code 3 if the report (after --severity and "
-            "--baseline filtering) is non-empty. Useful for CI gating."
-        ),
-    )
-    repo_parser.add_argument(
-        "--include-history",
-        action="store_true",
-        help=(
-            "Also scan added lines from recent commit diffs, catching secrets "
-            "that were committed and later removed from the current tree."
-        ),
-    )
-    repo_parser.add_argument(
-        "--max-commits",
-        type=int,
-        default=DEFAULT_MAX_HISTORY_COMMITS,
-        help=(
-            "Number of recent commits to scan when --include-history is set. "
-            f"Defaults to {DEFAULT_MAX_HISTORY_COMMITS}."
-        ),
-    )
-    repo_parser.add_argument(
-        "--baseline",
-        type=Path,
-        help=(
-            "Path to a baseline file. Findings matching an accepted fingerprint "
-            "in it are excluded from the report."
-        ),
-    )
-    repo_parser.add_argument(
-        "--write-baseline",
-        type=Path,
-        help=(
-            "Write every finding from this scan to PATH as an accepted baseline, "
-            "then exit. Combine with --baseline on later runs to surface only "
-            "new findings."
-        ),
-    )
+    _add_history_args(repo_parser)
+    _add_common_scan_args(repo_parser)
     repo_parser.set_defaults(handler=_scan_repo)
 
     org_parser = scan_subcommands.add_parser(
@@ -146,76 +85,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--branch",
         help="Branch to scan in every repo. Defaults to each repo default branch.",
     )
-    org_parser.add_argument(
-        "--exclude",
-        default="",
-        help='Comma-separated file path or glob patterns, e.g. "*.min.js,dist/*".',
-    )
-    org_parser.add_argument(
-        "--severity",
-        choices=("low", "medium", "high"),
-        help="Minimum confidence level to include in the report.",
-    )
-    org_parser.add_argument(
-        "--output",
-        choices=("terminal", "json", "html", "sarif"),
-        default="terminal",
-        help="Report format. Defaults to terminal.",
-    )
-    org_parser.add_argument(
-        "--output-file",
-        type=Path,
-        help="Write the report to a file instead of stdout.",
-    )
-    org_parser.add_argument(
-        "--no-color",
-        action="store_true",
-        help="Disable ANSI colors in terminal output.",
-    )
-    org_parser.add_argument(
-        "--fail-on-findings",
-        action="store_true",
-        help=(
-            "Exit with status code 3 if the report (after --severity and "
-            "--baseline filtering) is non-empty. Useful for CI gating. Takes "
-            "precedence over a clean exit but not over partial-scan failures "
-            "(status code 2)."
-        ),
-    )
-    org_parser.add_argument(
-        "--include-history",
-        action="store_true",
-        help=(
-            "Also scan added lines from recent commit diffs in every repository, "
-            "catching secrets that were committed and later removed."
-        ),
-    )
-    org_parser.add_argument(
-        "--max-commits",
-        type=int,
-        default=DEFAULT_MAX_HISTORY_COMMITS,
-        help=(
-            "Number of recent commits to scan per repository when "
-            f"--include-history is set. Defaults to {DEFAULT_MAX_HISTORY_COMMITS}."
-        ),
-    )
-    org_parser.add_argument(
-        "--baseline",
-        type=Path,
-        help=(
-            "Path to a baseline file. Findings matching an accepted fingerprint "
-            "in it are excluded from the report."
-        ),
-    )
-    org_parser.add_argument(
-        "--write-baseline",
-        type=Path,
-        help=(
-            "Write every finding from this scan to PATH as an accepted baseline, "
-            "then exit. Combine with --baseline on later runs to surface only "
-            "new findings."
-        ),
-    )
+    _add_history_args(org_parser)
+    _add_common_scan_args(org_parser)
     org_parser.set_defaults(handler=_scan_org)
 
     local_parser = scan_subcommands.add_parser(
@@ -228,41 +99,79 @@ def build_parser() -> argparse.ArgumentParser:
         default=".",
         help="Local directory or file to scan. Defaults to the current directory.",
     )
-    local_parser.add_argument(
+    _add_common_scan_args(local_parser)
+    local_parser.set_defaults(handler=_scan_local)
+
+    return parser
+
+
+def _add_history_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--include-history",
+        action="store_true",
+        help=(
+            "Also scan added lines from recent commit diffs, catching secrets "
+            "that were committed and later removed from the current tree."
+        ),
+    )
+    parser.add_argument(
+        "--max-commits",
+        type=int,
+        default=DEFAULT_MAX_HISTORY_COMMITS,
+        help=(
+            "Number of recent commits to scan when --include-history is set. "
+            f"Defaults to {DEFAULT_MAX_HISTORY_COMMITS}."
+        ),
+    )
+
+
+def _add_common_scan_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
         "--exclude",
         default="",
         help='Comma-separated file path or glob patterns, e.g. "*.min.js,dist/*".',
     )
-    local_parser.add_argument(
+    parser.add_argument(
         "--severity",
         choices=("low", "medium", "high"),
         help="Minimum confidence level to include in the report.",
     )
-    local_parser.add_argument(
+    parser.add_argument(
         "--output",
         choices=("terminal", "json", "html", "sarif"),
         default="terminal",
         help="Report format. Defaults to terminal.",
     )
-    local_parser.add_argument(
+    parser.add_argument(
         "--output-file",
         type=Path,
         help="Write the report to a file instead of stdout.",
     )
-    local_parser.add_argument(
+    parser.add_argument(
         "--no-color",
         action="store_true",
         help="Disable ANSI colors in terminal output.",
     )
-    local_parser.add_argument(
+    parser.add_argument(
+        "--entropy-threshold",
+        type=float,
+        default=None,
+        help=(
+            "Minimum Shannon entropy (bits/char) for the base64-class entropy "
+            "detector. Lower values catch more but are noisier. Hex-only tokens "
+            "use a proportionally lower threshold automatically."
+        ),
+    )
+    parser.add_argument(
         "--fail-on-findings",
         action="store_true",
         help=(
             "Exit with status code 3 if the report (after --severity and "
-            "--baseline filtering) is non-empty. Useful for CI gating."
+            "--baseline filtering) is non-empty. Useful for CI gating. Does not "
+            "override a partial-scan failure (status code 2)."
         ),
     )
-    local_parser.add_argument(
+    parser.add_argument(
         "--baseline",
         type=Path,
         help=(
@@ -270,7 +179,7 @@ def build_parser() -> argparse.ArgumentParser:
             "in it are excluded from the report."
         ),
     )
-    local_parser.add_argument(
+    parser.add_argument(
         "--write-baseline",
         type=Path,
         help=(
@@ -279,9 +188,6 @@ def build_parser() -> argparse.ArgumentParser:
             "new findings."
         ),
     )
-    local_parser.set_defaults(handler=_scan_local)
-
-    return parser
 
 
 async def _run(args: argparse.Namespace) -> int:
@@ -291,7 +197,7 @@ async def _run(args: argparse.Namespace) -> int:
 
 async def _scan_repo(args: argparse.Namespace) -> int:
     async with GitHubClient() as github_client:
-        scanner = RepositoryScanner(github_client)
+        scanner = RepositoryScanner(github_client, **_detector_kwargs(args))
         exclude_patterns = parse_exclude_patterns(args.exclude)
         findings = await scanner.scan_repo(
             args.repo,
@@ -320,7 +226,7 @@ async def _scan_repo(args: argparse.Namespace) -> int:
 
 async def _scan_org(args: argparse.Namespace) -> int:
     async with GitHubClient() as github_client:
-        scanner = RepositoryScanner(github_client)
+        scanner = RepositoryScanner(github_client, **_detector_kwargs(args))
         exclude_patterns = parse_exclude_patterns(args.exclude)
         result = await scanner.scan_org(
             args.org,
@@ -357,7 +263,7 @@ async def _scan_org(args: argparse.Namespace) -> int:
 
 
 async def _scan_local(args: argparse.Namespace) -> int:
-    scanner = LocalScanner()
+    scanner = LocalScanner(**_detector_kwargs(args))
     findings = scanner.scan_path(
         args.path,
         exclude_patterns=parse_exclude_patterns(args.exclude),
@@ -372,6 +278,22 @@ async def _scan_local(args: argparse.Namespace) -> int:
 
     reported = _emit_report(_apply_baseline(findings, args.baseline), args)
     return 3 if args.fail_on_findings and reported else 0
+
+
+def _detector_kwargs(args: argparse.Namespace) -> dict[str, Any]:
+    """Build optional detector overrides so default scans stay untouched.
+
+    Returning an empty dict when no override is requested keeps the scanner
+    constructors on their default code path (and keeps test doubles that only
+    accept the required positional argument working).
+    """
+    threshold = getattr(args, "entropy_threshold", None)
+    if threshold is None:
+        return {}
+    if threshold <= 0:
+        raise ValueError("--entropy-threshold must be greater than 0")
+
+    return {"entropy_detector": EntropyDetector(entropy_threshold=threshold)}
 
 
 def _apply_baseline(
