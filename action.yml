@@ -76,7 +76,7 @@ runs:
       with:
         python-version: "3.12"
 
-    - name: Install secret-scanner-cli
+    - name: Install cardesa-secret-scanner
       shell: bash
       run: python -m pip install "${{ github.action_path }}"
 
@@ -85,17 +85,29 @@ runs:
       shell: bash
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
+        # Inputs are passed through the environment, never interpolated into
+        # the script body, so a malicious value cannot break out into shell
+        # execution on the runner.
+        SS_TARGET_TYPE: ${{ inputs.target-type }}
+        SS_TARGET: ${{ inputs.target }}
+        SS_SARIF_PATH: ${{ inputs.sarif-path }}
+        SS_BRANCH: ${{ inputs.branch }}
+        SS_EXCLUDE: ${{ inputs.exclude }}
+        SS_SEVERITY: ${{ inputs.severity }}
+        SS_BASELINE: ${{ inputs.baseline }}
+        SS_INCLUDE_HISTORY: ${{ inputs.include-history }}
+        SS_MAX_COMMITS: ${{ inputs.max-commits }}
       run: |
         set +e
-        args=(scan "${{ inputs.target-type }}" "${{ inputs.target }}")
-        args+=(--output sarif --output-file "${{ inputs.sarif-path }}")
+        args=(scan "$SS_TARGET_TYPE" "$SS_TARGET")
+        args+=(--output sarif --output-file "$SS_SARIF_PATH")
         args+=(--fail-on-findings)
-        [ -n "${{ inputs.branch }}" ] && args+=(--branch "${{ inputs.branch }}")
-        [ -n "${{ inputs.exclude }}" ] && args+=(--exclude "${{ inputs.exclude }}")
-        [ -n "${{ inputs.severity }}" ] && args+=(--severity "${{ inputs.severity }}")
-        [ -n "${{ inputs.baseline }}" ] && args+=(--baseline "${{ inputs.baseline }}")
-        [ "${{ inputs.include-history }}" = "true" ] && args+=(--include-history)
-        [ -n "${{ inputs.max-commits }}" ] && args+=(--max-commits "${{ inputs.max-commits }}")
+        [ -n "$SS_BRANCH" ] && args+=(--branch "$SS_BRANCH")
+        [ -n "$SS_EXCLUDE" ] && args+=(--exclude "$SS_EXCLUDE")
+        [ -n "$SS_SEVERITY" ] && args+=(--severity "$SS_SEVERITY")
+        [ -n "$SS_BASELINE" ] && args+=(--baseline "$SS_BASELINE")
+        [ "$SS_INCLUDE_HISTORY" = "true" ] && args+=(--include-history)
+        [ -n "$SS_MAX_COMMITS" ] && args+=(--max-commits "$SS_MAX_COMMITS")
         secret-scanner "${args[@]}"
         echo "exit-code=$?" >> "$GITHUB_OUTPUT"
         set -e
@@ -108,12 +120,15 @@ runs:
 
     - name: Evaluate scan result
       shell: bash
+      env:
+        SS_EXIT_CODE: ${{ steps.scan.outputs.exit-code }}
+        SS_FAIL_ON_FINDINGS: ${{ inputs.fail-on-findings }}
       run: |
-        code="${{ steps.scan.outputs.exit-code }}"
+        code="$SS_EXIT_CODE"
         if [ "$code" = "0" ]; then
           echo "secret-scanner: no findings."
         elif [ "$code" = "3" ]; then
-          if [ "${{ inputs.fail-on-findings }}" = "true" ]; then
+          if [ "$SS_FAIL_ON_FINDINGS" = "true" ]; then
             echo "secret-scanner found findings. See the Security tab for details."
             exit 1
           fi
