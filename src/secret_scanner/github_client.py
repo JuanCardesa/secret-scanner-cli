@@ -107,6 +107,22 @@ class GitHubClient:
             for item in payload
         ]
 
+    async def get_repo(self, owner: str, repo: str) -> GitHubRepo:
+        response = await self._request(
+            "GET",
+            f"/repos/{_url_part(owner)}/{_url_part(repo)}",
+        )
+        payload = _json_object(response)
+
+        return GitHubRepo(
+            id=int(payload["id"]),
+            name=str(payload["name"]),
+            full_name=str(payload["full_name"]),
+            default_branch=str(payload.get("default_branch", "")),
+            html_url=str(payload.get("html_url", "")),
+            private=bool(payload.get("private", False)),
+        )
+
     async def get_branch_sha(self, owner: str, repo: str, branch: str) -> str:
         response = await self._request(
             "GET",

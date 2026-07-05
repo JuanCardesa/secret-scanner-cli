@@ -24,8 +24,17 @@ DEFAULT_EXCLUDE_PATTERNS = (
     "npm-shrinkwrap.json",
     "yarn.lock",
     "pnpm-lock.yaml",
+    "poetry.lock",
+    "Pipfile.lock",
+    "Gemfile.lock",
+    "Cargo.lock",
+    "composer.lock",
+    "go.sum",
     "*.min.js",
     "*.map",
+    # The tool's own baseline is nothing but SHA-256 fingerprints; scanning it
+    # would flag every hex digest as a high-entropy token.
+    ".secretscanner-baseline.json",
 )
 T = TypeVar("T")
 
@@ -33,6 +42,10 @@ T = TypeVar("T")
 class GitHubRepositoryClient(Protocol):
     async def list_org_repos(self, org: str) -> list[GitHubRepo]:
         """Return public repositories for an organization."""
+        ...
+
+    async def get_repo(self, owner: str, repo: str) -> GitHubRepo:
+        """Return metadata for a single repository, including default_branch."""
         ...
 
     async def get_branch_sha(self, owner: str, repo: str, branch: str) -> str:
@@ -133,7 +146,7 @@ class RepositoryScanner:
         self,
         repo_full_name: str,
         *,
-        branch: str = "main",
+        branch: str | None = None,
         exclude_patterns: Iterable[str] = (),
     ) -> list[Finding]:
         owner, repo_name = parse_repo_full_name(repo_full_name)
@@ -177,11 +190,14 @@ class RepositoryScanner:
         owner: str,
         repo_name: str,
         *,
-        branch: str = "main",
+        branch: str | None = None,
         exclude_patterns: Iterable[str] = (),
     ) -> list[Finding]:
         repo_full_name = f"{owner}/{repo_name}"
-        commit_sha = await self._github_client.get_branch_sha(owner, repo_name, branch)
+        target_branch = branch or await self._resolve_default_branch(owner, repo_name)
+        commit_sha = await self._github_client.get_branch_sha(
+            owner, repo_name, target_branch
+        )
         git_tree = await self._github_client.get_tree(
             owner,
             repo_name,
@@ -222,7 +238,7 @@ class RepositoryScanner:
         self,
         repo_full_name: str,
         *,
-        branch: str = "main",
+        branch: str | None = None,
         max_commits: int = DEFAULT_MAX_HISTORY_COMMITS,
         exclude_patterns: Iterable[str] = (),
     ) -> list[Finding]:
@@ -240,7 +256,7 @@ class RepositoryScanner:
         owner: str,
         repo_name: str,
         *,
-        branch: str = "main",
+        branch: str | None = None,
         max_commits: int = DEFAULT_MAX_HISTORY_COMMITS,
         exclude_patterns: Iterable[str] = (),
     ) -> list[Finding]:
@@ -251,10 +267,11 @@ class RepositoryScanner:
         are still detected.
         """
         repo_full_name = f"{owner}/{repo_name}"
+        target_branch = branch or await self._resolve_default_branch(owner, repo_name)
         commit_shas = await self._github_client.list_commit_shas(
             owner,
             repo_name,
-            branch,
+            target_branch,
             max_count=max_commits,
         )
         active_excludes = self._exclude_patterns + tuple(exclude_patterns)
@@ -276,6 +293,15 @@ class RepositoryScanner:
             findings.extend(finding for group in results for finding in group)
 
         return findings
+
+    async def _resolve_default_branch(self, owner: str, repo_name: str) -> str:
+        """Look up a repository's default branch when the caller omits one.
+
+        Avoids assuming 'main': a repo whose default is 'master' or anything
+        else would otherwise fail with a confusing branch-not-found error.
+        """
+        repo = await self._github_client.get_repo(owner, repo_name)
+        return repo.default_branch or "main"
 
     async def scan_org_history(
         self,

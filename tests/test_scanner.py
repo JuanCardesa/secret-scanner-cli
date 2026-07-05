@@ -28,8 +28,11 @@ class FakeGitHubClient:
         commit_shas: list[str] | None = None,
         commit_files: dict[str, list[CommitFile]] | None = None,
         commit_shas_by_repo: dict[str, list[str] | Exception] | None = None,
+        default_branch: str = "main",
     ) -> None:
         self.tree = tree
+        self.default_branch = default_branch
+        self.get_repo_calls: list[tuple[str, str]] = []
         self.blobs = blobs
         self.branch_sha = branch_sha
         self.repos = repos or []
@@ -54,6 +57,17 @@ class FakeGitHubClient:
     async def list_org_repos(self, org: str) -> list[GitHubRepo]:
         self.org_calls.append(org)
         return self.repos
+
+    async def get_repo(self, owner: str, repo: str) -> GitHubRepo:
+        self.get_repo_calls.append((owner, repo))
+        return GitHubRepo(
+            id=1,
+            name=repo,
+            full_name=f"{owner}/{repo}",
+            default_branch=self.default_branch,
+            html_url=f"https://github.com/{owner}/{repo}",
+            private=False,
+        )
 
     async def get_branch_sha(self, owner: str, repo: str, branch: str) -> str:
         self.branch_calls.append((owner, repo, branch))
@@ -215,6 +229,48 @@ async def test_scan_repo_combines_regex_and_entropy_findings() -> None:
     assert {finding.repo for finding in findings} == {"example/repo"}
     assert {finding.commit_sha for finding in findings} == {"commit-123"}
     assert all("*" in finding.matched_text for finding in findings)
+
+
+@pytest.mark.asyncio
+async def test_scan_repo_resolves_default_branch_when_none_given() -> None:
+    content = "AWS_ACCESS_KEY_ID=AKIA0000000000000000\n"
+    client = FakeGitHubClient(
+        tree=GitTree(
+            sha="tree-sha",
+            truncated=False,
+            tree=[tree_item("app.env", "blob-1", size=len(content))],
+        ),
+        blobs={"blob-1": content},
+        branch_sha="commit-123",
+        default_branch="trunk",
+    )
+    scanner = RepositoryScanner(client)
+
+    await scanner.scan_repo("example/repo")
+
+    assert client.get_repo_calls == [("example", "repo")]
+    assert client.branch_calls == [("example", "repo", "trunk")]
+
+
+@pytest.mark.asyncio
+async def test_scan_repo_skips_default_branch_lookup_when_branch_given() -> None:
+    content = "AWS_ACCESS_KEY_ID=AKIA0000000000000000\n"
+    client = FakeGitHubClient(
+        tree=GitTree(
+            sha="tree-sha",
+            truncated=False,
+            tree=[tree_item("app.env", "blob-1", size=len(content))],
+        ),
+        blobs={"blob-1": content},
+        branch_sha="commit-123",
+        default_branch="trunk",
+    )
+    scanner = RepositoryScanner(client)
+
+    await scanner.scan_repo("example/repo", branch="develop")
+
+    assert client.get_repo_calls == []
+    assert client.branch_calls == [("example", "repo", "develop")]
 
 
 @pytest.mark.asyncio

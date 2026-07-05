@@ -7,6 +7,7 @@ pre-commit hook or as a standalone audit of a working tree.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -105,15 +106,19 @@ class LocalScanner:
             yield root_path, root_path.name
             return
 
-        for file_path in sorted(root_path.rglob("*")):
-            if not file_path.is_file():
-                continue
+        # Prune excluded directories in place so os.walk never descends into
+        # them: on a monorepo this avoids stat-ing every file under, say, a
+        # 200k-file node_modules just to discard it afterwards.
+        for dirpath, dirnames, filenames in os.walk(root_path):
+            dirnames[:] = sorted(
+                name for name in dirnames if not _is_always_excluded_dir(name)
+            )
+            for filename in sorted(filenames):
+                file_path = Path(dirpath) / filename
+                if not file_path.is_file():
+                    continue
 
-            relative_parts = file_path.relative_to(root_path).parts
-            if any(_is_always_excluded_dir(part) for part in relative_parts[:-1]):
-                continue
-
-            yield file_path, file_path.relative_to(root_path).as_posix()
+                yield file_path, file_path.relative_to(root_path).as_posix()
 
 
 def _is_always_excluded_dir(name: str) -> bool:

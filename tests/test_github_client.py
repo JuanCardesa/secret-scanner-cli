@@ -45,6 +45,32 @@ async def test_client_sends_standard_and_auth_headers() -> None:
     assert seen_headers["authorization"] == "Bearer test-token"
 
 
+async def test_get_repo_returns_metadata_with_default_branch() -> None:
+    seen_path: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_path["path"] = request.url.path
+        return json_response(
+            request,
+            200,
+            {
+                "id": 42,
+                "name": "repo",
+                "full_name": "owner/repo",
+                "default_branch": "trunk",
+                "html_url": "https://github.com/owner/repo",
+                "private": False,
+            },
+        )
+
+    async with GitHubClient(transport=httpx.MockTransport(handler)) as client:
+        repo = await client.get_repo("owner", "repo")
+
+    assert seen_path["path"] == "/repos/owner/repo"
+    assert repo.default_branch == "trunk"
+    assert repo.full_name == "owner/repo"
+
+
 async def test_client_reads_token_from_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
