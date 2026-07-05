@@ -83,7 +83,7 @@ To cut a release:
 
 The workflow refuses to publish if the tag doesn't match the version in
 `pyproject.toml`. Before the first release, a maintainer must register this
-repository as a Trusted Publisher for the `secret-scanner-cli` PyPI project
+repository as a Trusted Publisher for the `cardesa-secret-scanner` PyPI project
 (PyPI supports doing this before the project's first upload via a pending
 publisher) and create a `pypi` environment in this repository's settings for
 the publish job to target.

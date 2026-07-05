@@ -15,7 +15,6 @@ GENERATED_DIR = DEMO_DIR / ".generated"
 REPORTS_DIR = DEMO_DIR / "reports"
 DEMO_REPO = "demo/local-fixture"
 DEMO_COMMIT_SHA = "demo-local-commit"
-DEMO_AUTHOR_EMAIL = "demo@example.invalid"
 
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
@@ -100,7 +99,6 @@ def _scan_demo_fixture(fixture_dir: Path) -> list[Finding]:
                     repo=DEMO_REPO,
                     file_path=relative_path,
                     commit_sha=DEMO_COMMIT_SHA,
-                    author_email=DEMO_AUTHOR_EMAIL,
                 )
             )
 

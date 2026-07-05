@@ -16,13 +16,18 @@
   </p>
 </div>
 
-A Python CLI for scanning public GitHub repositories for exposed secrets using
-regex pattern matching and Shannon entropy analysis.
+A Python CLI that scans GitHub repositories for exposed secrets over the
+GitHub API, without cloning them, using regex pattern matching and Shannon
+entropy analysis. It also scans a local checkout, emits SARIF for GitHub code
+scanning, and ships as a reusable GitHub Action.
 
-> Status: Phases 1 to 5 are implemented. The project currently supports
-> detector execution, GitHub API access, repository scan orchestration, terminal
-> reports, JSON reports, HTML reports, and tested `scan repo` / `scan org`
-> commands.
+Most secret scanners work on a local clone. Scanning over the API instead lets
+you audit an entire organization, or a repository's commit history, without
+pulling anything to disk first.
+
+<p align="center">
+  <img src="docs/assets/demo.gif" alt="Terminal recording of a local scan finding four secrets" width="820">
+</p>
 
 ## Why this matters
 
@@ -42,8 +47,14 @@ to clone and inspect.
 
 ## Features
 
-- Regex-based detection from external `patterns.yaml` definitions.
-- Shannon entropy detection for high-entropy token-like strings.
+- Regex-based detection from external `patterns.yaml` definitions, covering 24
+  providers (AWS access and secret keys, GitHub, GitLab, Stripe, Anthropic,
+  OpenAI, Hugging Face, Google, Slack, Azure, and more).
+- Shannon entropy detection for high-entropy token-like strings, with a
+  charset-aware threshold so hexadecimal secrets are detectable, not just
+  base64-class ones.
+- Inline `# secret-scanner:ignore` / `pragma: allowlist secret` directives to
+  silence a specific line without a baseline entry.
 - Typed findings with dataclasses.
 - Secret redaction before values leave the detector layer.
 - Unit tests for detector behavior and common false-positive filters.
@@ -65,10 +76,12 @@ to clone and inspect.
 ## Installation
 
 ```bash
-python -m venv .venv
-.venv\Scripts\activate
-python -m pip install -e ".[dev]"
+pip install cardesa-secret-scanner
 ```
+
+The distribution is named `cardesa-secret-scanner` on PyPI; the installed
+command is `secret-scanner`. For a local development checkout instead, see
+[Development](#development).
 
 ## Usage
 
@@ -77,6 +90,7 @@ secret-scanner scan repo owner/repo
 secret-scanner scan repo owner/repo --branch develop
 secret-scanner scan repo owner/repo --exclude "*.min.js,package-lock.json"
 secret-scanner scan repo owner/repo --severity high
+secret-scanner scan repo owner/repo --entropy-threshold 4.0
 secret-scanner scan repo owner/repo --output json --output-file reports/report.json
 secret-scanner scan repo owner/repo --output html --output-file reports/report.html
 secret-scanner scan repo owner/repo --include-history
@@ -100,8 +114,11 @@ exits with status code `3` if the report (after `--severity` and
 `--baseline` filtering) is non-empty, which is what makes any of these
 commands usable as a CI gate.
 
-For organization scans, each repository uses its GitHub `default_branch` unless
-`--branch` is provided. If one repository fails, the scanner records the failure,
+For a single `scan repo` without `--branch`, the scanner looks up and uses the
+repository's GitHub `default_branch`, so it works against repositories whose
+default is `master`, `trunk`, or anything else, not just `main`. For
+organization scans, each repository likewise uses its own `default_branch`
+unless `--branch` is provided. If one repository fails, the scanner records the failure,
 continues with the remaining repositories, prints a warning to stderr, and exits
 with status code `2` to signal a partial scan.
 
@@ -138,6 +155,38 @@ report, so only new findings show up. Review a scan's output before writing
 a baseline from it -- the baseline mechanism does not distinguish a real
 secret from a false positive, it only remembers what you told it to accept.
 
+### Suppressing a single line
+
+For a one-off false positive, an inline comment is lighter than a baseline
+entry. Any line containing `secret-scanner:ignore`, `secret-scanner:allow`, or
+`pragma: allowlist secret` (case-insensitive, in any comment syntax) is skipped
+by both detectors:
+
+```python
+TEST_FIXTURE_KEY = "AKIAIOSFODNN7EXAMPLE"  # secret-scanner:ignore
+```
+
+### Tuning entropy noise
+
+The entropy detector uses a charset-aware floor: base64-class tokens must clear
+`--entropy-threshold` (default `4.5`), while hexadecimal-only tokens use a
+proportionally lower floor so they are detectable at all (a hex string peaks at
+4.0 bits/char and could never clear 4.5). Lower `--entropy-threshold` to catch
+more, raise it to cut noise.
+
+### Pre-commit hook
+
+This repository exposes a [pre-commit](https://pre-commit.com) hook that runs
+`scan local .` before each commit. Add it to a `.pre-commit-config.yaml`:
+
+```yaml
+repos:
+  - repo: https://github.com/JuanCardesa/secret-scanner-cli
+    rev: develop
+    hooks:
+      - id: secret-scanner
+```
+
 ## Example Results
 
 The repository includes a local demo that scans a controlled synthetic fixture.
@@ -164,12 +213,14 @@ match for a generated token-like value.
 Terminal excerpt:
 
 ```text
-Confidence | Method  | Pattern                      | Repository         | File    | Line | Match
------------+---------+------------------------------+--------------------+---------+------+-------------------------------------------------
-high       | regex   | AWS access key               | demo/local-fixture | app.env | 2    | AKIA************0000
-high       | regex   | GitHub personal access token | demo/local-fixture | app.env | 3    | ghp_AAAA************************AAAAAAAA
-high       | regex   | Stripe live API key          | demo/local-fixture | app.env | 4    | sk_liv********************BBBBBB
-medium     | entropy | High entropy token           | demo/local-fixture | app.env | 5    | UvQXUNYAU******************************5ObQ3DfNB
+Confidence | Method  | Pattern                      | Repository         | File    | Line | Entropy | Match
+-----------+---------+------------------------------+--------------------+---------+------+---------+-------------------------------------------------
+high       | regex   | AWS access key               | demo/local-fixture | app.env | 2    | 1.02    | AKIA************0000
+high       | regex   | GitHub personal access token | demo/local-fixture | app.env | 3    | 0.67    | ghp_AAAA************************AAAAAAAA
+high       | regex   | Stripe live API key          | demo/local-fixture | app.env | 4    | 1.50    | sk_liv********************BBBBBB
+medium     | entropy | High entropy token           | demo/local-fixture | app.env | 5    | 4.79    | UvQXUNYAU******************************5ObQ3DfNB
+
+4 potential secrets found.
 ```
 
 JSON excerpt:
@@ -178,6 +229,7 @@ JSON excerpt:
 {
   "confidence": "high",
   "detection_method": "regex",
+  "entropy_score": 1.0219280948873624,
   "file_path": "app.env",
   "matched_text": "AKIA************0000",
   "pattern_name": "AWS access key",
@@ -270,14 +322,19 @@ secret-scanner-cli/
 |-- src/
 |   `-- secret_scanner/
 |       |-- detectors/
+|       |-- baseline.py
 |       |-- cli.py
+|       |-- directives.py
 |       |-- github_client.py
+|       |-- local_scanner.py
 |       |-- models.py
 |       |-- reporter.py
 |       |-- scanner.py
-|       `-- patterns.yaml
+|       |-- patterns.yaml
+|       `-- __main__.py
 |-- tests/
 |-- .env.example
+|-- .pre-commit-hooks.yaml
 |-- .secretscanner-baseline.json
 |-- action.yml
 |-- CONTRIBUTING.md
@@ -317,16 +374,21 @@ See [CHANGELOG.md](CHANGELOG.md) for release notes.
   a deliberate choice to avoid making unauthorized requests with someone
   else's credentials, at the cost of being unable to confirm a key is still
   active.
+- **Non-UTF-8 files are skipped silently.** Blobs and local files that do not
+  decode as UTF-8 (including binaries, but also Latin-1 or UTF-16 source) are
+  dropped rather than transcoded, so a secret living only in such a file is a
+  false negative. Text in UTF-8 -- the overwhelming default for source and
+  config -- is unaffected.
+- **Entropy on hex is inherently noisy.** Charset-aware thresholds make
+  hexadecimal secrets detectable, but a random 40-char commit SHA or a
+  content hash is indistinguishable from a hex secret by shape alone and will
+  be flagged. Lockfiles and the tool's own baseline are excluded by default;
+  beyond that, use `--exclude`, the baseline, or inline directives to manage
+  the noise, or raise `--entropy-threshold`.
 - **The baseline allowlist is not centrally managed.** `--baseline` /
   `--write-baseline` (see [Usage](#usage)) work per invocation; there is no
   shared, versioned baseline store for a team, and a baseline file is only
   as trustworthy as the review behind the scan that produced it.
-- **No release has been published yet.** [release.yml](.github/workflows/release.yml)
-  builds and publishes to PyPI on a `vX.Y.Z` tag push via Trusted
-  Publishing, and `action.yml` still installs from source on every run
-  until a release exists; see [CONTRIBUTING.md](CONTRIBUTING.md) for the
-  release process and the one-time PyPI Trusted Publisher setup it depends
-  on.
 - **Regex coverage is broad but not exhaustive.** `patterns.yaml` covers the
   most common providers (see [Features](#features)) but, unlike dedicated
   projects such as `gitleaks` or `trufflehog`, it has not been validated
@@ -334,13 +396,13 @@ See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ## Roadmap
 
-- Configure PyPI Trusted Publishing for this project and tag the `v0.1.0`
-  release, exercising [release.yml](.github/workflows/release.yml) for the
-  first time.
-- Point `action.yml` at the published PyPI package instead of installing
-  from source once a release exists.
+- Point `action.yml` at the published PyPI package. It currently installs
+  from the action checkout on every run, which keeps the action code and the
+  ref you pin exactly in sync; pinning a released version is a possible future
+  optimization.
 - Add a shared, versioned baseline workflow for teams (today, `--baseline`
   is a local file per invocation; see Limitations above).
+- Grow `patterns.yaml` coverage toward a larger validated catalog.
 
 ## Legal
 
