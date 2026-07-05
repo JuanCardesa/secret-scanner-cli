@@ -106,6 +106,7 @@ def render_html(findings: list[Finding]) -> str:
         <th>Repository</th>
         <th>File</th>
         <th>Line</th>
+        <th>Entropy</th>
         <th>Match</th>
         <th>Commit</th>
       </tr>
@@ -195,6 +196,7 @@ def render_terminal(findings: list[Finding], *, use_color: bool = True) -> str:
         "Repository",
         "File",
         "Line",
+        "Entropy",
         "Match",
     )
     rows = [
@@ -205,6 +207,7 @@ def render_terminal(findings: list[Finding], *, use_color: bool = True) -> str:
             finding.repo,
             finding.file_path,
             str(finding.line_number),
+            f"{finding.entropy_score:.2f}",
             finding.matched_text,
         )
         for finding in findings
@@ -228,6 +231,11 @@ def render_terminal(findings: list[Finding], *, use_color: bool = True) -> str:
             )
         )
 
+    count = len(findings)
+    summary = f"{count} potential secret{'s' if count != 1 else ''} found."
+    lines.append("")
+    lines.append(_colorize(summary, "31") if use_color else summary)
+
     return "\n".join(lines)
 
 
@@ -242,7 +250,9 @@ def _format_row(
     if confidence is not None and use_color:
         cells[0] = _colorize(cells[0], CONFIDENCE_COLORS[confidence])
 
-    return " | ".join(cells)
+    # Don't pad the last column: trailing spaces would trip `git diff --check`
+    # and whitespace-sensitive tooling on the rendered report.
+    return " | ".join(cells).rstrip()
 
 
 def _format_separator(widths: list[int]) -> str:
@@ -262,6 +272,7 @@ def _html_row(finding: Finding) -> str:
         f"<td>{html.escape(finding.repo)}</td>"
         f"<td>{html.escape(finding.file_path)}</td>"
         f"<td>{finding.line_number}</td>"
+        f"<td>{finding.entropy_score:.2f}</td>"
         f"<td><code>{html.escape(finding.matched_text)}</code></td>"
         f"<td><code>{html.escape(finding.commit_sha)}</code></td>"
         "</tr>"

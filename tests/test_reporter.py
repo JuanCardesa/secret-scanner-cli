@@ -45,6 +45,7 @@ def test_render_json_returns_structured_report() -> None:
                 "pattern_name": "AWS Access Key ID",
                 "confidence": "high",
                 "commit_sha": "abc123",
+                "entropy_score": 0.0,
             }
         ]
     }
