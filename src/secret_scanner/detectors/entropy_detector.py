@@ -16,11 +16,23 @@ HEX_TOKEN_RE = re.compile(r"^[0-9a-fA-F]+$")
 # single token; strip a leading `name=` / `name:` so length, entropy, and the
 # hex-vs-base64 threshold all judge the value, not the identifier glued to it.
 ASSIGNMENT_PREFIX_RE = re.compile(r"^[A-Za-z0-9_.-]+[=:](?P<value>.+)$")
+# A dotted namespace / import path -- a Java package reference like
+# `es.us.dp1.app.configuration.jwt.JwtUtils`, a Python dotted module, etc. Such
+# tokens only clear the entropy floor because '.' is in the token charset; they
+# are source-code identifiers, never secrets. Every '.'-separated segment must
+# be a short identifier: long segments (e.g. base64 JWT parts) are not, so real
+# dotted secrets stay in scope. See _is_dotted_namespace.
+NAMESPACE_SEGMENT_RE = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]*")
+NAMESPACE_MIN_SEGMENTS = 3
+NAMESPACE_MAX_SEGMENT_LENGTH = 30
 # Base64/base62-class tokens draw from a ~64-symbol alphabet (max entropy 6
-# bits/char), so 4.5 is a sensible noise floor. Hex tokens draw from only 16
-# symbols (max entropy 4.0 bits/char), so the same 4.5 threshold would make
-# every hex secret undetectable; they get a proportionally lower floor.
-DEFAULT_ENTROPY_THRESHOLD = 4.5
+# bits/char). The floor sits at 4.7: real random secrets score 5.0-6.0, while
+# structured, human-authored strings (dotted paths, prose, config identifiers)
+# cluster below it -- raising the old 4.5 floor sheds that low-signal band
+# without losing genuine high-entropy credentials. Hex tokens draw from only 16
+# symbols (max entropy 4.0 bits/char), so the same floor would make every hex
+# secret undetectable; they get a proportionally lower floor.
+DEFAULT_ENTROPY_THRESHOLD = 4.7
 DEFAULT_HEX_ENTROPY_THRESHOLD = 3.0
 DEFAULT_MIN_TOKEN_LENGTH = 21
 DEFAULT_EXCLUDED_PATHS = (
@@ -36,8 +48,54 @@ DEFAULT_EXCLUDED_PATHS = (
     "go.sum",
     "*.min.js",
     "*.map",
+    # Vendored dependencies, virtualenvs and build output are not the author's
+    # code; entropy-scanning a committed venv's CA bundle or node_modules floods
+    # the report with third-party noise. (Signature/regex detectors still scan
+    # these paths, so a real key vendored by mistake is not missed.)
+    "*/node_modules/*",
+    "node_modules/*",
+    "*/site-packages/*",
+    "site-packages/*",
+    "*/vendor/*",
+    "vendor/*",
+    "*/dist/*",
+    "dist/*",
+    "*/build/*",
+    "build/*",
+    "*/.tox/*",
+    "*/__pycache__/*",
+    "*venv*/*",
+    "*/.venv/*",
+    ".venv/*",
+    # Test and fixture trees: high-entropy strings here are sample/mock data, not
+    # live credentials. Scoped to the entropy detector only -- a real signature
+    # match (e.g. an AWS key) in a test file is still reported.
+    "*/tests/*",
+    "tests/*",
+    "*/test/*",
+    "test/*",
+    "*/__tests__/*",
+    "*/spec/*",
+    "spec/*",
+    "*/specs/*",
+    "*/fixtures/*",
+    "fixtures/*",
+    "*/__fixtures__/*",
+    "*/__mocks__/*",
+    "*/mocks/*",
+    "*/testdata/*",
+    "testdata/*",
+    "test_*.*",
+    "*_test.*",
+    "*.test.*",
+    "*.spec.*",
 )
 IMAGE_EXTENSIONS = {".gif", ".jpg", ".jpeg", ".png", ".webp", ".ico", ".svg"}
+# Bulk data / certificate files: PEM bundles are base64 certs (real PEM private
+# keys are still caught by the regex "PEM private key" detector), and CSV/TSV
+# data dumps produce entropy noise column by column.
+DATA_CERT_EXTENSIONS = {".pem", ".crt", ".cer", ".csv", ".tsv"}
+EXCLUDED_SUFFIXES = IMAGE_EXTENSIONS | DATA_CERT_EXTENSIONS
 
 
 class EntropyDetector:
@@ -76,6 +134,9 @@ class EntropyDetector:
                 raw = match.group(0).strip(".,;\"'`)]}>")
                 candidate = self._secret_candidate(raw)
                 if len(candidate) < self.min_token_length:
+                    continue
+
+                if _is_dotted_namespace(candidate):
                     continue
 
                 # Score entropy on the same string used to pick the threshold,
@@ -131,7 +192,7 @@ class EntropyDetector:
         name = PurePosixPath(normalized).name
         suffix = PurePosixPath(normalized).suffix.lower()
 
-        if suffix in IMAGE_EXTENSIONS:
+        if suffix in EXCLUDED_SUFFIXES:
             return True
 
         return any(
@@ -161,6 +222,26 @@ def scan_content(
         file_path=file_path,
         commit_sha=commit_sha,
     )
+
+
+def _is_dotted_namespace(token: str) -> bool:
+    """Return True for dotted import/namespace paths (not secrets).
+
+    A token qualifies when it is at least ``NAMESPACE_MIN_SEGMENTS`` dot-
+    separated identifier segments and no single segment is longer than
+    ``NAMESPACE_MAX_SEGMENT_LENGTH``. The length cap is what keeps real dotted
+    secrets in scope: a JWT's base64 segments run far longer than any Java or
+    Python identifier, so they never match.
+    """
+    segments = token.split(".")
+    if len(segments) < NAMESPACE_MIN_SEGMENTS:
+        return False
+    for segment in segments:
+        if not NAMESPACE_SEGMENT_RE.fullmatch(segment):
+            return False
+        if len(segment) > NAMESPACE_MAX_SEGMENT_LENGTH:
+            return False
+    return True
 
 
 def _is_false_positive_line(line: str) -> bool:

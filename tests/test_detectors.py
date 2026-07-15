@@ -234,7 +234,7 @@ def test_regex_detector_honors_inline_ignore_directive() -> None:
 
 
 def test_entropy_detector_flags_hex_secret_below_base64_threshold() -> None:
-    # A 64-char hex secret peaks at 4.0 bits/char, so the default 4.5 base64
+    # A 64-char hex secret peaks at 4.0 bits/char, so the default 4.7 base64
     # floor can never catch it; the hex-aware floor must.
     hex_secret = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2"
 
@@ -322,3 +322,117 @@ def test_entropy_detector_ignores_common_false_positive_sources(
     findings = detector.scan(content, file_path=file_path)
 
     assert findings == []
+
+
+# A genuinely random base64-class secret used across the exclusion tests below:
+# on its own (unremarkable path) it clears the default entropy floor and IS
+# flagged, so each test proves the *exclusion* is what suppresses it.
+_HIGH_ENTROPY_SECRET = "qR8vN3pLx9ZtY2mK5sD7fG1hJ4aC6bE0wUiOoP"
+
+
+def test_entropy_secret_control_is_flagged_on_an_ordinary_path() -> None:
+    findings = EntropyDetector().scan(
+        f"token = {_HIGH_ENTROPY_SECRET}", file_path="src/app/config.py"
+    )
+
+    assert [f.detection_method for f in findings] == ["entropy"]
+
+
+def test_entropy_detector_allowlists_dotted_namespace_paths() -> None:
+    # A Java package/class reference clears the entropy floor only because '.'
+    # is a token character; it is source code, not a secret.
+    java_ref = "es.us.dp1.lx_xy_24_25.your_game_name.configuration.jwt.JwtUtils"
+
+    findings = EntropyDetector().scan(f"import {java_ref};", file_path="Security.java")
+
+    assert findings == []
+
+
+def test_entropy_detector_still_flags_dotted_token_with_a_long_segment() -> None:
+    # The namespace allowlist must not swallow real dotted secrets: a segment
+    # longer than an identifier (here a random base64 run) keeps it in scope.
+    dotted_secret = f"prefix.value.{_HIGH_ENTROPY_SECRET}"
+
+    findings = EntropyDetector().scan(f"token = {dotted_secret}", file_path="config.py")
+
+    assert [f.detection_method for f in findings] == ["entropy"]
+
+
+@pytest.mark.parametrize(
+    "file_path",
+    [
+        "backend/vagrant_venv/lib/python3.12/site-packages/certifi/cacert.pem",
+        "node_modules/some-dep/index.js",
+        "vendor/bundle/gem.rb",
+        ".venv/lib/site.py",
+        "frontend/dist/bundle.js",
+    ],
+)
+def test_entropy_detector_skips_vendored_and_build_paths(file_path: str) -> None:
+    findings = EntropyDetector().scan(
+        f"value = {_HIGH_ENTROPY_SECRET}", file_path=file_path
+    )
+
+    assert findings == []
+
+
+@pytest.mark.parametrize(
+    "file_path",
+    [
+        "tests/test_scanner.py",
+        "src/__tests__/auth.spec.ts",
+        "spec/models_spec.rb",
+        "fixtures/sample_payload.txt",
+        "app/testdata/dump.txt",
+        "auth_test.go",
+    ],
+)
+def test_entropy_detector_skips_test_and_fixture_paths(file_path: str) -> None:
+    findings = EntropyDetector().scan(
+        f"value = {_HIGH_ENTROPY_SECRET}", file_path=file_path
+    )
+
+    assert findings == []
+
+
+@pytest.mark.parametrize(
+    "file_path",
+    ["certs/ca-bundle.pem", "data/export.csv", "server.crt"],
+)
+def test_entropy_detector_skips_data_and_certificate_files(file_path: str) -> None:
+    findings = EntropyDetector().scan(
+        f"value = {_HIGH_ENTROPY_SECRET}", file_path=file_path
+    )
+
+    assert findings == []
+
+
+def test_entropy_threshold_revision_drops_mid_entropy_tokens() -> None:
+    # A 25-symbol run scores ~4.64 bits/char: above the old 4.5 floor, below the
+    # revised 4.7 default. The default must now ignore it; a caller that lowers
+    # the floor back to 4.5 must still catch it.
+    mid_entropy = "abcdefghijklmnopqrstuvwxy"
+
+    assert EntropyDetector().scan(f"k = {mid_entropy}", file_path="config.txt") == []
+    lowered = EntropyDetector(entropy_threshold=4.5).scan(
+        f"k = {mid_entropy}", file_path="config.txt"
+    )
+    assert [f.detection_method for f in lowered] == ["entropy"]
+
+
+def test_regex_detector_still_flags_secrets_in_excluded_entropy_paths() -> None:
+    # The vendored/test/fixture exclusions are scoped to the entropy detector.
+    # A signature match (AWS key) in a test file is high-precision and must
+    # still be reported -- this guards against the exclusions leaking into the
+    # regex detector.
+    detector = RegexDetector(load_patterns(PATTERNS_PATH))
+
+    for file_path in (
+        "tests/test_local_scanner.py",
+        "backend/site-packages/boto/creds.py",
+        "fixtures/aws.env",
+    ):
+        findings = detector.scan(
+            "aws_access_key_id = AKIA0000000000000000", file_path=file_path
+        )
+        assert [f.pattern_name for f in findings] == ["AWS access key"], file_path
