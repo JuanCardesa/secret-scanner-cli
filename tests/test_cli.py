@@ -826,7 +826,7 @@ def test_entropy_threshold_flag_lowers_the_detection_floor(
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
 ) -> None:
-    # A base64-class token whose entropy (~3.58) sits below the 4.5 default.
+    # A base64-class token whose entropy (~3.58) sits below the 4.7 default.
     token = "aabbccddeeffgghhiijjkkll"
     (tmp_path / "config.txt").write_text(f"value = {token}\n", encoding="utf-8")
 
