@@ -279,7 +279,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: JuanCardesa/secret-scanner-cli@develop
+      - uses: JuanCardesa/secret-scanner-cli@v0.1.0
         with:
           target-type: repo # 'local', 'repo', or 'org'
           target: owner/repo
