@@ -7,6 +7,20 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-15
+
+### Changed
+
+- Shorten the action description in `action.yml` to satisfy the GitHub
+  Marketplace 125-character limit.
+
+### Fixed
+
+- Set `GH_REPO` in the release workflow so the GitHub release job works
+  without a repository checkout.
+- Suppress a self-scan hit on a new AWS key test fixture via the inline
+  ignore directive.
+
 ## [0.1.0] - 2026-07-15
 
 First published release (distributed on PyPI as `cardesa-secret-scanner`).

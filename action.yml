@@ -1,7 +1,8 @@
 name: "Secret Scanner CLI"
+# Marketplace requires this to stay under 125 characters.
 description: >-
-  Scan a GitHub repository, organization, or local checkout for exposed
-  secrets and upload the results to GitHub code scanning as SARIF.
+  Scan a repository, organization, or local checkout for exposed secrets
+  and upload SARIF results to GitHub code scanning.
 author: "JuanCardesa"
 
 branding:
