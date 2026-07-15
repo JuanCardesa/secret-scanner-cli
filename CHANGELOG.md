@@ -7,7 +7,7 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
-## [0.1.0] - 2026-07-05
+## [0.1.0] - 2026-07-15
 
 First published release (distributed on PyPI as `cardesa-secret-scanner`).
 
@@ -18,7 +18,9 @@ First published release (distributed on PyPI as `cardesa-secret-scanner`).
   OpenAI, Hugging Face, Google, Slack, Azure, and more), with a
   `(?P<secret>...)` named group to narrow context-anchored matches.
 - Shannon entropy detection with charset-aware thresholds so hexadecimal
-  secrets are detectable, tunable via `--entropy-threshold`.
+  secrets are detectable, tunable via `--entropy-threshold`, with noise
+  suppression for dotted namespace paths, vendored/test/fixture trees, and
+  bulk data or certificate files.
 - Redacted, typed findings for detector output.
 - Async GitHub REST API client with token authentication, pagination,
   rate-limit backoff, and safe blob decoding.
