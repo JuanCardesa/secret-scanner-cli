@@ -433,6 +433,7 @@ def test_regex_detector_still_flags_secrets_in_excluded_entropy_paths() -> None:
         "fixtures/aws.env",
     ):
         findings = detector.scan(
-            "aws_access_key_id = AKIA0000000000000000", file_path=file_path
+            "aws_access_key_id = AKIA0000000000000000",  # secret-scanner:ignore
+            file_path=file_path,
         )
         assert [f.pattern_name for f in findings] == ["AWS access key"], file_path
